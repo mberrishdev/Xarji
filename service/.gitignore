@@ -1,0 +1,30 @@
+# Environment variables (contains secrets)
+.env
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Logs
+*.log
+service.log
+service.error.log
+
+# Local state database
+*.sqlite
+*.sqlite-journal
+
+# OS files
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Instant cloned repo (not part of this project)
+instant/

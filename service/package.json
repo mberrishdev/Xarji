@@ -1,0 +1,22 @@
+{
+  "name": "sms-expense-service",
+  "version": "1.0.0",
+  "description": "Background service for tracking bank SMS expenses on macOS",
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "dev": "bun run --watch src/index.ts",
+    "install-service": "bun run src/cli.ts install",
+    "uninstall-service": "bun run src/cli.ts uninstall",
+    "status": "bun run src/cli.ts status",
+    "test-parse": "bun run src/cli.ts test"
+  },
+  "dependencies": {
+    "@instantdb/admin": "latest",
+    "boxen": "^8.0.1",
+    "chalk": "^5.6.2"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
