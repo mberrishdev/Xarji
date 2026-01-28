@@ -1,9 +1,10 @@
 {
-  "name": "sms-expense-service",
+  "name": "xarji-service",
   "version": "1.0.0",
-  "description": "Background service for tracking bank SMS expenses on macOS",
+  "description": "xarji — Finance manager for Georgian banks (service)",
   "type": "module",
   "scripts": {
+    "setup": "bun run src/setup.ts",
     "start": "bun run src/index.ts",
     "dev": "bun run --watch src/index.ts",
     "install-service": "bun run src/cli.ts install",

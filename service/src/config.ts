@@ -52,9 +52,9 @@ export const defaultConfig: Config = {
 
   bankSenderIds: ["SOLO"],
 
-  stateDbPath: join(home, ".sms-expense-tracker", "state.db"),
+  stateDbPath: join(home, ".xarji", "state.db"),
 
-  localBackupPath: join(home, ".sms-expense-tracker", "transactions.json"),
+  localBackupPath: join(home, ".xarji", "transactions.json"),
 
   instantdb: {
     enabled: false,
@@ -86,7 +86,7 @@ export const defaultConfig: Config = {
 
 // Load config from file if exists, otherwise use defaults
 export function loadConfig(): Config {
-  const configPath = join(home, ".sms-expense-tracker", "config.json");
+  const configPath = join(home, ".xarji", "config.json");
 
   try {
     const file = Bun.file(configPath);
@@ -103,7 +103,7 @@ export function loadConfig(): Config {
 
 // Save config to file
 export async function saveConfig(config: Partial<Config>): Promise<void> {
-  const configDir = join(home, ".sms-expense-tracker");
+  const configDir = join(home, ".xarji");
   const configPath = join(configDir, "config.json");
 
   // Ensure directory exists
@@ -120,10 +120,10 @@ export async function saveConfig(config: Partial<Config>): Promise<void> {
   await Bun.write(configPath, JSON.stringify(serializable, null, 2));
 }
 
-export const CONFIG_DIR = join(home, ".sms-expense-tracker");
+export const CONFIG_DIR = join(home, ".xarji");
 export const LAUNCHD_PLIST_PATH = join(
   home,
   "Library",
   "LaunchAgents",
-  "com.smsexpensetracker.plist"
+  "com.xarji.plist"
 );

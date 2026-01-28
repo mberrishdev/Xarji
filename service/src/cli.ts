@@ -13,7 +13,7 @@ import { parseMessages } from "./parser";
 import { StateDb, ensureStateDbDir } from "./state-db";
 import * as tui from "./tui";
 
-const SERVICE_NAME = "com.smsexpensetracker";
+const SERVICE_NAME = "com.xarji";
 const BUN_PATH = process.execPath; // Path to bun executable
 const SERVICE_DIR = resolve(import.meta.dir, "..");
 
@@ -119,7 +119,7 @@ function loadEnvFile(): { appId?: string; adminToken?: string } {
  * Interactive install wizard
  */
 async function install(): Promise<void> {
-  tui.title("SMS Expense Tracker Setup");
+  tui.title("xarji Setup");
   tui.println();
 
   // Step 1: InstantDB Configuration
@@ -213,7 +213,7 @@ async function install(): Promise<void> {
   tui.info("Useful commands:");
   tui.kv("Status", "bun run src/cli.ts status");
   tui.kv("Test", "bun run src/cli.ts test");
-  tui.kv("Logs", "tail -f ~/.sms-expense-tracker/service.log");
+  tui.kv("Logs", "tail -f ~/.xarji/service.log");
   tui.println();
 
   tui.close();
@@ -223,7 +223,7 @@ async function install(): Promise<void> {
  * Uninstall the service
  */
 async function uninstall(): Promise<void> {
-  console.log("Uninstalling SMS Expense Tracker service...\n");
+  console.log("Uninstalling xarji service...\n");
 
   // 1. Unload the service
   console.log("1. Unloading service...");
@@ -254,7 +254,7 @@ async function uninstall(): Promise<void> {
  * Show service status
  */
 async function status(): Promise<void> {
-  console.log("SMS Expense Tracker Status\n");
+  console.log("xarji Status\n");
   console.log("=".repeat(50));
 
   // Check if plist exists
@@ -313,7 +313,7 @@ async function status(): Promise<void> {
  * Test parsing messages (without syncing)
  */
 async function test(): Promise<void> {
-  console.log("Testing SMS Expense Tracker...\n");
+  console.log("Testing xarji...\n");
 
   try {
     const reader = new MessagesDbReader();
@@ -441,7 +441,7 @@ switch (command) {
     break;
 
   default:
-    console.log("SMS Expense Tracker CLI\n");
+    console.log("xarji CLI\n");
     console.log("Usage:");
     console.log("  bun run src/cli.ts install                         Interactive setup wizard");
     console.log("  bun run src/cli.ts uninstall                       Remove the service");

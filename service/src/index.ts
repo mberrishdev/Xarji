@@ -19,7 +19,7 @@ process.on("SIGTERM", () => {
 
 // Start the service
 console.log("=".repeat(50));
-console.log("SMS Expense Tracker Service");
+console.log("ხარჯი — xarji service");
 console.log("=".repeat(50));
 
 await service.start();
