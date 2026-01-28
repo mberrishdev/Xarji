@@ -137,7 +137,7 @@ export function Settings() {
           <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
             <p className="text-sm text-blue-700">
               These sender IDs should match your backend config at{" "}
-              <code className="text-xs bg-blue-100 px-1 py-0.5 rounded">~/.sms-expense-tracker/config.json</code>.
+              <code className="text-xs bg-blue-100 px-1 py-0.5 rounded">~/.xarji/config.json</code>.
               Changes here are stored in InstantDB for reference.
             </p>
           </div>
