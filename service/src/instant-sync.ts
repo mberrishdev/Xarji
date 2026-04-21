@@ -28,6 +28,41 @@ let db: ReturnType<typeof init<typeof schema>> | null = null;
  */
 let syncedIds: Set<string> | null = null;
 
+/**
+ * Split a batch of transactions into the three destination tables.
+ * Pure function — exported for direct testing without spinning up a DB.
+ *
+ * Rule: direction === "in" → credits, status === "failed" → failedPayments,
+ * everything else → payments. The direction check runs first so a failed
+ * incoming (if we ever add that kind) still lands with other incoming.
+ */
+export function routeTransactions(transactions: Transaction[]): {
+  credits: Transaction[];
+  failedPayments: Transaction[];
+  successfulPayments: Transaction[];
+} {
+  const credits = transactions.filter((tx) => tx.direction === "in");
+  const failedPayments = transactions.filter(
+    (tx) => tx.direction !== "in" && tx.status === "failed"
+  );
+  const successfulPayments = transactions.filter(
+    (tx) => tx.direction !== "in" && tx.status === "success"
+  );
+  return { credits, failedPayments, successfulPayments };
+}
+
+/**
+ * Drop transactions whose id already appears in `existingIds`. Returns the
+ * filtered list and the count skipped. Pure function.
+ */
+export function applyDedup(
+  transactions: Transaction[],
+  existingIds: ReadonlySet<string>
+): { toSync: Transaction[]; skipped: number } {
+  const toSync = transactions.filter((t) => !existingIds.has(t.id));
+  return { toSync, skipped: transactions.length - toSync.length };
+}
+
 async function loadSyncedIds(): Promise<Set<string>> {
   if (!db) return new Set();
   const ids = new Set<string>();
@@ -96,9 +131,8 @@ export async function syncTransactions(
       syncedIds = await loadSyncedIds();
     }
     const dedupSet = syncedIds;
-    const preFilterCount = transactions.length;
-    transactions = transactions.filter((t) => !dedupSet.has(t.id));
-    const skipped = preFilterCount - transactions.length;
+    const { toSync, skipped } = applyDedup(transactions, dedupSet);
+    transactions = toSync;
     if (skipped > 0) {
       console.log(`[InstantDB] Skipping ${skipped} already-synced transactions (dedup)`);
     }
@@ -110,15 +144,7 @@ export async function syncTransactions(
     const now = Date.now();
     const operations: any[] = [];
 
-    // Route by direction + status:
-    //   direction === "in"     → credits
-    //   status    === "failed" → failedPayments
-    //   otherwise              → payments
-    const credits = transactions.filter((tx) => tx.direction === "in");
-    const failedPayments = transactions.filter((tx) => tx.direction !== "in" && tx.status === "failed");
-    const successfulPayments = transactions.filter(
-      (tx) => tx.direction !== "in" && tx.status === "success"
-    );
+    const { credits, failedPayments, successfulPayments } = routeTransactions(transactions);
 
     for (const tx of successfulPayments) {
       const txId = id();
