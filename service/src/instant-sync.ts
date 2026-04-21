@@ -8,10 +8,44 @@ export interface InstantSyncResult {
   syncedCount: number;
   paymentsCount: number;
   failedPaymentsCount: number;
+  creditsCount: number;
   error?: string;
 }
 
 let db: ReturnType<typeof init<typeof schema>> | null = null;
+
+/**
+ * In-memory cache of transactionIds already written to InstantDB, across
+ * all three namespaces (payments, failedPayments, credits). Populated on
+ * the first sync after startup and kept warm thereafter.
+ *
+ * Rationale: our `transactionId` field has a schema-level `unique()`
+ * constraint, but because the setup wizard bootstraps namespaces by doing
+ * a schemaless `init()` (to get around "attributes are missing" on empty
+ * apps), that uniqueness is not enforced server-side. Without this cache,
+ * re-running the service after `rm ~/.xarji/state.db` would re-insert
+ * every historical row as a duplicate.
+ */
+let syncedIds: Set<string> | null = null;
+
+async function loadSyncedIds(): Promise<Set<string>> {
+  if (!db) return new Set();
+  const ids = new Set<string>();
+  try {
+    const res = await db.query({
+      payments: { $: { limit: 100000 } },
+      failedPayments: { $: { limit: 100000 } },
+      credits: { $: { limit: 100000 } },
+    });
+    for (const p of res.payments || []) if (p.transactionId) ids.add(p.transactionId);
+    for (const p of res.failedPayments || []) if (p.transactionId) ids.add(p.transactionId);
+    for (const c of res.credits || []) if (c.transactionId) ids.add(c.transactionId);
+    console.log(`[InstantDB] Loaded ${ids.size} existing transactionIds for dedup`);
+  } catch (err) {
+    console.error("[InstantDB] Could not preload dedup set, proceeding without it:", err);
+  }
+  return ids;
+}
 
 /**
  * Initialize InstantDB connection
@@ -49,22 +83,43 @@ export async function syncTransactions(
   bankSenderId: string
 ): Promise<InstantSyncResult> {
   if (!db) {
-    return { success: false, syncedCount: 0, paymentsCount: 0, failedPaymentsCount: 0, error: "InstantDB not initialized" };
+    return { success: false, syncedCount: 0, paymentsCount: 0, failedPaymentsCount: 0, creditsCount: 0, error: "InstantDB not initialized" };
   }
 
   if (transactions.length === 0) {
-    return { success: true, syncedCount: 0, paymentsCount: 0, failedPaymentsCount: 0 };
+    return { success: true, syncedCount: 0, paymentsCount: 0, failedPaymentsCount: 0, creditsCount: 0 };
   }
 
   try {
+    // Lazy-load the dedup cache on first call. Subsequent calls just read it.
+    if (syncedIds === null) {
+      syncedIds = await loadSyncedIds();
+    }
+    const dedupSet = syncedIds;
+    const preFilterCount = transactions.length;
+    transactions = transactions.filter((t) => !dedupSet.has(t.id));
+    const skipped = preFilterCount - transactions.length;
+    if (skipped > 0) {
+      console.log(`[InstantDB] Skipping ${skipped} already-synced transactions (dedup)`);
+    }
+
+    if (transactions.length === 0) {
+      return { success: true, syncedCount: 0, paymentsCount: 0, failedPaymentsCount: 0, creditsCount: 0 };
+    }
+
     const now = Date.now();
     const operations: any[] = [];
 
-    // Separate by status
-    const successfulPayments = transactions.filter(tx => tx.status === "success");
-    const failedPayments = transactions.filter(tx => tx.status === "failed");
+    // Route by direction + status:
+    //   direction === "in"     → credits
+    //   status    === "failed" → failedPayments
+    //   otherwise              → payments
+    const credits = transactions.filter((tx) => tx.direction === "in");
+    const failedPayments = transactions.filter((tx) => tx.direction !== "in" && tx.status === "failed");
+    const successfulPayments = transactions.filter(
+      (tx) => tx.direction !== "in" && tx.status === "success"
+    );
 
-    // Build operations for successful payments
     for (const tx of successfulPayments) {
       const txId = id();
       operations.push(
@@ -86,7 +141,6 @@ export async function syncTransactions(
       );
     }
 
-    // Build operations for failed payments
     for (const tx of failedPayments) {
       const txId = id();
       operations.push(
@@ -107,22 +161,54 @@ export async function syncTransactions(
       );
     }
 
-    // Execute all operations
-    if (operations.length > 0) {
-      await db.transact(operations);
+    for (const tx of credits) {
+      if (tx.amount === null) continue;
+      const txId = id();
+      operations.push(
+        db.tx.credits[txId].update({
+          transactionId: tx.id,
+          transactionType: tx.transactionType,
+          amount: tx.amount,
+          currency: tx.currency,
+          counterparty: tx.counterparty ?? tx.merchant,
+          cardLastDigits: tx.cardLastDigits,
+          transactionDate: tx.transactionDate.getTime(),
+          messageTimestamp: tx.messageTimestamp.getTime(),
+          syncedAt: now,
+          bankSenderId,
+          rawMessage: tx.rawMessage,
+        })
+      );
     }
 
-    console.log(`[InstantDB] Synced ${successfulPayments.length} payments, ${failedPayments.length} failed payments`);
+    if (operations.length > 0) {
+      await db.transact(operations);
+      // Record the ids we just wrote so a subsequent call in the same process
+      // won't retry them.
+      for (const tx of transactions) dedupSet.add(tx.id);
+    }
+
+    console.log(
+      `[InstantDB] Synced ${successfulPayments.length} payments, ${failedPayments.length} failed, ${credits.length} credits`
+    );
     return {
       success: true,
       syncedCount: transactions.length,
       paymentsCount: successfulPayments.length,
       failedPaymentsCount: failedPayments.length,
+      creditsCount: credits.length,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error("[InstantDB] Batch sync error:", message);
-    return { success: false, syncedCount: 0, paymentsCount: 0, failedPaymentsCount: 0, error: message };
+    return {
+      success: false,
+      syncedCount: 0,
+      paymentsCount: 0,
+      failedPaymentsCount: 0,
+      creditsCount: 0,
+      error: message,
+    };
   }
 }
 
@@ -197,5 +283,6 @@ export function isConnected(): boolean {
  */
 export function closeInstantDB(): void {
   db = null;
+  syncedIds = null;
   console.log("[InstantDB] Connection closed");
 }
