@@ -148,6 +148,7 @@ export function LinkBtn({ children, onClick }: { children: React.ReactNode; onCl
   const T = useTheme();
   return (
     <button
+      type="button"
       onClick={onClick}
       style={{
         background: "transparent",
@@ -197,6 +198,7 @@ export function PageHeader({
             {ranges.map((r) => (
               <button
                 key={r}
+                type="button"
                 onClick={() => onRange && onRange(r)}
                 style={{
                   padding: "7px 14px",
@@ -224,6 +226,7 @@ export function Toggle({ active, onChange }: { active: boolean; onChange: () => 
   const T = useTheme();
   return (
     <button
+      type="button"
       onClick={onChange}
       style={{
         width: 40,
