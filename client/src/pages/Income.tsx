@@ -4,10 +4,9 @@ import { Card, CardLabel, CardTitle, Pill, PageHeader } from "../ink/primitives"
 import { TxRow, type InkTx } from "../ink/TxRow";
 import { useCredits, useMonthCredits } from "../hooks/useCredits";
 import { useBankSenders } from "../hooks/useBankSenders";
-import { useMonthlyTrend } from "../hooks/useMonthlyTrend";
 import { AreaChart } from "../ink/charts";
-import { currencySymbol, monthKey, formatLocalDay, parseLocalDay } from "../ink/format";
-import { isWithinInterval, startOfMonth, endOfMonth, format } from "date-fns";
+import { currencySymbol, monthKey, monthLabel, formatLocalDay, parseLocalDay } from "../ink/format";
+import { isWithinInterval, startOfMonth, endOfMonth, format, subMonths } from "date-fns";
 
 export function Income() {
   const T = useTheme();
@@ -17,15 +16,22 @@ export function Income() {
   const { credits } = useCredits();
   const monthly = useMonthCredits(my);
   const { senders } = useBankSenders();
-  const monthlyTrend = useMonthlyTrend(9);
 
   const [search, setSearch] = useState("");
   const [bank, setBank] = useState("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  const credits6mTrend = useMemo(() => {
-    // credits-only monthly totals (GEL)
-    const keys = monthlyTrend.map((m) => m.key);
+  // Build the 9-month income trend directly from credits. Deriving keys
+  // from a payments-backed trend would drop months with income but no
+  // spending (e.g. a month where salary arrived but no cards were used),
+  // so walk the calendar back from `now` and bucket credits into those
+  // absolute months regardless of whether any payments exist.
+  const credits9mTrend = useMemo(() => {
+    const MONTHS = 9;
+    const keys: string[] = [];
+    for (let i = MONTHS - 1; i >= 0; i--) {
+      keys.push(monthKey(subMonths(now, i).getTime()));
+    }
     const totals: Record<string, number> = {};
     for (const c of credits) {
       if (c.currency !== "GEL") continue;
@@ -33,8 +39,8 @@ export function Income() {
       if (!keys.includes(k)) continue;
       totals[k] = (totals[k] || 0) + c.amount;
     }
-    return monthlyTrend.map((m) => ({ label: m.label.slice(0, 3), value: totals[m.key] || 0 }));
-  }, [credits, monthlyTrend]);
+    return keys.map((k) => ({ label: monthLabel(k).slice(0, 3), value: totals[k] || 0 }));
+  }, [credits, now]);
 
   const allTx: InkTx[] = useMemo(() => {
     return credits.map((c) => ({
@@ -146,10 +152,10 @@ export function Income() {
           <div style={{ fontSize: 12.5, color: T.muted, fontFamily: T.sans }}>
             {monthly.count} incoming transactions · {format(now, "MMMM yyyy")}
           </div>
-          {T.chartsVisible && credits6mTrend.some((d) => d.value > 0) && (
+          {T.chartsVisible && credits9mTrend.some((d) => d.value > 0) && (
             <div style={{ marginTop: 14 }}>
               <AreaChart
-                data={credits6mTrend}
+                data={credits9mTrend}
                 width={560}
                 height={110}
                 stroke={T.green}
@@ -170,7 +176,7 @@ export function Income() {
                   marginTop: 2,
                 }}
               >
-                {credits6mTrend.map((d, i) => (
+                {credits9mTrend.map((d, i) => (
                   <span key={i}>{d.label.toUpperCase()}</span>
                 ))}
               </div>
