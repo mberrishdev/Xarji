@@ -14,9 +14,12 @@ import { file } from "bun";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Config } from "./config";
-import type { ExpenseTrackerService } from "./service";
+import { loadConfig } from "./config";
+import { ExpenseTrackerService } from "./service";
 import { allBanks } from "./parser";
 import { CLIENT_ASSETS } from "./generated/client-assets";
+import { serializeSchema, type FieldMap } from "./setup/schema";
+import { applySetup } from "./setup/apply";
 
 export interface HttpServerOptions {
   port: number;
@@ -25,6 +28,20 @@ export interface HttpServerOptions {
   // `configured` is separate from `service` because we always start the
   // HTTP server first; the parser only spins up when config is valid.
   configured: boolean;
+}
+
+/**
+ * Build the redacted form of current config values used by the
+ * onboarding UI to pre-populate the wizard on a re-run. We intentionally
+ * don't echo the admin token back so a "reconfigure" flow still has to
+ * re-paste the secret.
+ */
+function currentSetupValues(config: Config): FieldMap {
+  return {
+    instantAppId: config.instantdb.appId || "",
+    instantAdminToken: config.instantdb.adminToken ? "" : "",
+    bankSenderIds: config.bankSenderIds,
+  };
 }
 
 interface HealthResponse {
@@ -182,13 +199,51 @@ export function startHttpServer(opts: HttpServerOptions): HttpServerHandle {
           allBanks().map((b) => ({ bankKey: b.bankKey, senderIds: b.senderIds }))
         );
       }
-      if (path === "/api/setup") {
-        // PR 1 ships a GET stub that reports config presence; POST + the
-        // schema-driven wizard land in PR 2.
+      if (path === "/api/setup" && req.method === "GET") {
         return json({
           configured: opts.configured,
-          schema: null,
+          schema: serializeSchema(),
+          currentValues: currentSetupValues(opts.config),
         });
+      }
+      if (path === "/api/setup" && req.method === "POST") {
+        let body: unknown;
+        try {
+          body = await req.json();
+        } catch {
+          return json({ ok: false, error: "Request body must be valid JSON" }, { status: 400 });
+        }
+        const values = (body ?? {}) as FieldMap;
+        const result = await applySetup(values);
+        if (!result.ok) {
+          return json(result, { status: 400 });
+        }
+        // Swap the running process into the configured state in place:
+        // reload config from disk, spin up the parser, and flip the
+        // flags so /api/health starts reporting "running" without the
+        // user having to restart the binary.
+        try {
+          const newConfig = loadConfig();
+          const newService = new ExpenseTrackerService(newConfig);
+          await newService.start();
+          // Stop any previous instance just in case this was a reconfigure.
+          opts.service?.stop();
+          opts.config = newConfig;
+          opts.service = newService;
+          opts.configured = true;
+        } catch (err) {
+          // Config is written but the parser failed to start. The user
+          // can recover by restarting the binary; we don't roll back.
+          return json(
+            {
+              ok: true,
+              completed: result.completed,
+              warning: `Config saved but parser failed to start: ${String(err)}. Restart the binary.`,
+            },
+            { status: 200 }
+          );
+        }
+        return json(result);
       }
       if (path.startsWith("/api/")) {
         return json({ error: "unknown endpoint" }, { status: 404 });

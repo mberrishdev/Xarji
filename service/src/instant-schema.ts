@@ -56,6 +56,24 @@ const schema = i.schema({
       bankSenderId: i.string().indexed(),
       rawMessage: i.string(),
     }),
+
+    // User-defined categories shown on the dashboard. Managed by the
+    // client — included here so the schema-backed bootstrap pass in
+    // setup/apply.ts can register all namespaces the app uses.
+    categories: i.entity({
+      name: i.string(),
+      color: i.string(),
+      icon: i.string(),
+      isDefault: i.boolean(),
+    }),
+
+    // Configured bank SMS senders, one row per sender the user trusts.
+    bankSenders: i.entity({
+      senderId: i.string().unique(),
+      displayName: i.string(),
+      enabled: i.boolean(),
+      createdAt: i.number(),
+    }),
   },
   links: {},
 });
