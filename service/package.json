@@ -11,7 +11,8 @@
     "uninstall-service": "bun run src/cli.ts uninstall",
     "status": "bun run src/cli.ts status",
     "test-parse": "bun run src/cli.ts test",
-    "test": "bun test"
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@instantdb/admin": "latest",
@@ -19,6 +20,7 @@
     "chalk": "^5.6.2"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "typescript": "~5.9"
   }
 }
