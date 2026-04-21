@@ -12,6 +12,7 @@
 export type {
   Transaction,
   ParseResult,
+  TransactionKind,
   TransactionKind as TransactionType,
   TransactionStatus,
   TransactionDirection,
