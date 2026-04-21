@@ -249,9 +249,16 @@ export function Transactions() {
               dayKeys.map((key) => {
                 const items = groups[key];
                 const d = parseLocalDay(key);
-                const total = items
-                  .filter((t) => t.kind === "payment" && t.currency === "GEL" && t.amount !== null)
-                  .reduce((s, t) => s + (t.amount || 0), 0);
+                // Day-header total only sums GEL successful payments; rows
+                // for foreign-currency purchases or declines are included
+                // in the list but can't be meaningfully added together, so
+                // the header is explicitly labelled as "GEL" to avoid
+                // claiming the total represents everything visible below.
+                const gelSuccessItems = items.filter(
+                  (t) => t.kind === "payment" && t.currency === "GEL" && t.amount !== null
+                );
+                const total = gelSuccessItems.reduce((s, t) => s + (t.amount || 0), 0);
+                const hasGelActivity = gelSuccessItems.length > 0;
                 const diff = Math.floor((today.getTime() - d.getTime()) / 86400000);
                 const label =
                   diff === 0
@@ -293,7 +300,7 @@ export function Transactions() {
                           flexShrink: 0,
                         }}
                       >
-                        −₾{total.toFixed(2)}
+                        {hasGelActivity ? `−₾${total.toFixed(2)} GEL` : "—"}
                       </span>
                     </div>
                     {items.map((t, i) => (
