@@ -30,18 +30,6 @@ export interface Config {
 
   // Polling interval in milliseconds (fallback if file watching fails)
   pollIntervalMs: number;
-
-  // Regex patterns for parsing
-  patterns: {
-    payment: {
-      trigger: RegExp;
-      amount: RegExp;
-    };
-    card: RegExp;
-    date: RegExp;
-    plusEarned: RegExp;
-    plusTotal: RegExp;
-  };
 }
 
 const home = homedir();
@@ -71,17 +59,6 @@ export const defaultConfig: Config = {
   },
 
   pollIntervalMs: 60000, // 1 minute fallback
-
-  patterns: {
-    payment: {
-      trigger: /გადახდა:/,
-      amount: /გადახდა:\s*([A-Z]{3})([\d,]+\.?\d*)/,
-    },
-    card: /Card:\*{3}(\d+)/,
-    date: /(\d{2}\.\d{2}\.\d{4})/,
-    plusEarned: /დაგერიცხებათ:\s*([\d,]+\.?\d*)\s*PLUS/,
-    plusTotal: /სულ:\s*([\d,]+\.?\d*)\s*PLUS/,
-  },
 };
 
 // Load config from file if exists, otherwise use defaults
@@ -110,14 +87,7 @@ export async function saveConfig(config: Partial<Config>): Promise<void> {
   await Bun.$`mkdir -p ${configDir}`;
 
   const merged = { ...defaultConfig, ...config };
-
-  // Convert RegExp to strings for JSON serialization
-  const serializable = {
-    ...merged,
-    patterns: undefined, // Don't save patterns, use defaults
-  };
-
-  await Bun.write(configPath, JSON.stringify(serializable, null, 2));
+  await Bun.write(configPath, JSON.stringify(merged, null, 2));
 }
 
 export const CONFIG_DIR = join(home, ".xarji");

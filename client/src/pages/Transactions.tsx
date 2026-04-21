@@ -1,96 +1,389 @@
-import { useState, useMemo } from "react";
-import { Card, CardContent, SearchInput, Tabs, TabsList, TabsTrigger } from "../components/ui";
-import { TransactionList } from "../components/transactions";
-import { useAllTransactions, usePayments, useFailedPayments } from "../hooks/useTransactions";
-import { groupBy, getDateGroup } from "../lib/utils";
+import { useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { useTheme, useViewport } from "../ink/theme";
+import { Card, CardLabel, PageHeader } from "../ink/primitives";
+import { TxRow, type InkTx } from "../ink/TxRow";
+import { usePayments, useFailedPayments } from "../hooks/useTransactions";
+import { useBankSenders } from "../hooks/useBankSenders";
+import { DEFAULT_CATEGORIES, getCategory, categorizeId } from "../lib/utils";
+import { currencySymbol, formatLocalDay, parseLocalDay } from "../ink/format";
 
-type FilterType = "all" | "success" | "failed";
+type TxKind = "all" | "payment" | "failed";
 
 export function Transactions() {
-  const [filter, setFilter] = useState<FilterType>("all");
-  const [search, setSearch] = useState("");
-
-  const { transactions, isLoading } = useAllTransactions();
+  const T = useTheme();
+  const vp = useViewport();
   const { payments } = usePayments();
   const { failedPayments } = useFailedPayments();
+  const { senders } = useBankSenders();
 
-  // Filter and search transactions
-  const filteredTransactions = useMemo(() => {
-    let result = transactions;
+  // `?category=<id>` pre-selects the category filter on load. Categories
+  // page navigates here with this param when the user clicks "All →" on
+  // a category's recent-transactions card. Values that don't match a
+  // known category id fall through to the "all" default.
+  const [searchParams] = useSearchParams();
+  const initialCat = (() => {
+    const raw = searchParams.get("category");
+    if (!raw) return "all";
+    return DEFAULT_CATEGORIES.some((c) => c.id === raw) ? raw : "all";
+  })();
 
-    // Apply filter
-    if (filter === "success") {
-      result = result.filter((tx) => tx.status === "success");
-    } else if (filter === "failed") {
-      result = result.filter((tx) => tx.status === "failed");
+  const [search, setSearch] = useState("");
+  const [bank, setBank] = useState("all");
+  const [cat, setCat] = useState(initialCat);
+  const [kind, setKind] = useState<TxKind>("all");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  const allTx: InkTx[] = useMemo(() => {
+    const combined: InkTx[] = [
+      ...payments.map((p) => ({
+        id: p.id,
+        kind: "payment" as const,
+        merchant: p.merchant || "",
+        rawMerchant: p.rawMessage,
+        amount: p.amount,
+        currency: p.currency,
+        cardLastDigits: p.cardLastDigits,
+        transactionDate: p.transactionDate,
+        bankSenderId: p.bankSenderId,
+        category: categorizeId(p.merchant, p.rawMessage),
+        rawMessage: p.rawMessage,
+        plusEarned: p.plusEarned,
+      })),
+      ...failedPayments.map((f) => ({
+        id: f.id,
+        kind: "failed" as const,
+        merchant: f.merchant || "",
+        rawMerchant: f.rawMessage,
+        amount: null,
+        currency: f.currency,
+        cardLastDigits: f.cardLastDigits,
+        transactionDate: f.transactionDate,
+        bankSenderId: f.bankSenderId,
+        category: categorizeId(f.merchant, f.rawMessage),
+        rawMessage: f.rawMessage,
+        failureReason: f.failureReason,
+      })),
+    ];
+    return combined.sort((a, b) => b.transactionDate - a.transactionDate);
+  }, [payments, failedPayments]);
+
+  const filtered = useMemo(() => {
+    return allTx.filter((t) => {
+      if (bank !== "all" && t.bankSenderId !== bank) return false;
+      if (cat !== "all" && t.category !== cat) return false;
+      if (kind !== "all" && t.kind !== kind) return false;
+      if (search) {
+        const q = search.toLowerCase();
+        if (!t.merchant.toLowerCase().includes(q) && !(t.rawMessage || "").toLowerCase().includes(q)) return false;
+      }
+      return true;
+    });
+  }, [allTx, bank, cat, kind, search]);
+
+  const groups = useMemo(() => {
+    const g: Record<string, InkTx[]> = {};
+    for (const t of filtered.slice(0, 200)) {
+      const key = formatLocalDay(t.transactionDate);
+      if (!g[key]) g[key] = [];
+      g[key].push(t);
     }
+    return g;
+  }, [filtered]);
 
-    // Apply search
-    if (search.trim()) {
-      const searchLower = search.toLowerCase();
-      result = result.filter(
-        (tx) =>
-          tx.merchant?.toLowerCase().includes(searchLower) ||
-          tx.cardLastDigits?.includes(searchLower)
-      );
-    }
+  const dayKeys = Object.keys(groups).sort((a, b) => b.localeCompare(a));
+  const selected = selectedId ? allTx.find((t) => t.id === selectedId) : null;
 
-    return result;
-  }, [transactions, filter, search]);
+  const bankOptions = senders.length > 0
+    ? senders.map((s) => ({ id: s.senderId, name: s.displayName }))
+    : Array.from(new Set(allTx.map((t) => t.bankSenderId)).values()).map((id) => ({ id, name: id }));
 
-  // Group filtered transactions by date
-  const filteredGroupedByDate = useMemo(() => {
-    return groupBy(filteredTransactions, (tx) => getDateGroup(tx.transactionDate));
-  }, [filteredTransactions]);
+  const FilterPill = ({
+    active,
+    onClick,
+    children,
+  }: {
+    active: boolean;
+    onClick: () => void;
+    children: React.ReactNode;
+  }) => (
+    <button
+      onClick={onClick}
+      style={{
+        padding: "7px 13px",
+        borderRadius: 999,
+        border: `1px solid ${active ? T.accent : T.line}`,
+        background: active ? T.accentSoft : "transparent",
+        color: active ? T.accent : T.muted,
+        fontSize: 12,
+        fontWeight: 600,
+        fontFamily: T.sans,
+        cursor: "pointer",
+      }}
+    >
+      {children}
+    </button>
+  );
 
-  const successCount = payments.length;
-  const failedCount = failedPayments.length;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
 
   return (
-    <div className="space-y-6">
-      {/* Page Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">Transactions</h1>
-        <p className="text-sm text-slate-500 mt-1">
-          View and manage all your transactions
-        </p>
-      </div>
+    <div style={{ display: "flex", flexDirection: "column", gap: T.density.gap, height: "100%" }}>
+      <PageHeader
+        eyebrow="All transactions · read-only from SMS"
+        title="Transactions"
+        active="Month"
+        rightSlot={
+          <span style={{ fontFamily: T.mono, fontSize: 11, color: T.dim }}>
+            {filtered.length.toLocaleString("en-US")} results
+          </span>
+        }
+      />
 
-      {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-4">
-        <div className="flex-1 max-w-md">
-          <SearchInput
-            placeholder="Search by merchant or card..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+      <Card pad="16px 18px">
+        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+          <div
+            style={{
+              flex: "1 1 260px",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "8px 12px",
+              background: T.panelAlt,
+              borderRadius: 10,
+              border: `1px solid ${T.line}`,
+            }}
+          >
+            <span style={{ fontFamily: T.mono, color: T.dim }}>⌕</span>
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search merchant or raw SMS…"
+              style={{
+                flex: 1,
+                border: "none",
+                background: "transparent",
+                color: T.text,
+                fontSize: 13,
+                outline: "none",
+                fontFamily: T.sans,
+              }}
+            />
+            {search && (
+              <button
+                onClick={() => setSearch("")}
+                style={{ border: "none", background: "transparent", color: T.dim, cursor: "pointer", fontSize: 14 }}
+              >
+                ×
+              </button>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <FilterPill active={kind === "all"} onClick={() => setKind("all")}>All</FilterPill>
+            <FilterPill active={kind === "payment"} onClick={() => setKind("payment")}>Successful</FilterPill>
+            <FilterPill active={kind === "failed"} onClick={() => setKind("failed")}>Declined</FilterPill>
+          </div>
+          <div style={{ width: 1, height: 20, background: T.line }} />
+          <select
+            value={bank}
+            onChange={(e) => setBank(e.target.value)}
+            style={{
+              padding: "7px 12px",
+              background: T.panelAlt,
+              border: `1px solid ${T.line}`,
+              color: T.text,
+              borderRadius: 10,
+              fontSize: 12,
+              fontFamily: T.sans,
+              cursor: "pointer",
+            }}
+          >
+            <option value="all">All banks</option>
+            {bankOptions.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.id} · {b.name}
+              </option>
+            ))}
+          </select>
+          <select
+            value={cat}
+            onChange={(e) => setCat(e.target.value)}
+            style={{
+              padding: "7px 12px",
+              background: T.panelAlt,
+              border: `1px solid ${T.line}`,
+              color: T.text,
+              borderRadius: 10,
+              fontSize: 12,
+              fontFamily: T.sans,
+              cursor: "pointer",
+            }}
+          >
+            <option value="all">All categories</option>
+            {DEFAULT_CATEGORIES.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
         </div>
-        <Tabs value={filter} onValueChange={(v) => setFilter(v as FilterType)}>
-          <TabsList>
-            <TabsTrigger value="all">
-              All ({transactions.length})
-            </TabsTrigger>
-            <TabsTrigger value="success">
-              Success ({successCount})
-            </TabsTrigger>
-            <TabsTrigger value="failed">
-              Failed ({failedCount})
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
-      </div>
-
-      {/* Transaction List */}
-      <Card>
-        <CardContent className="p-0">
-          <TransactionList
-            transactions={filteredTransactions}
-            groupedByDate={filteredGroupedByDate}
-            isLoading={isLoading}
-            showDateGroups={true}
-          />
-        </CardContent>
       </Card>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: selected ? (vp.narrow ? "1fr" : "1fr 340px") : "1fr",
+          gap: T.density.gap,
+          flex: 1,
+          minHeight: 0,
+        }}
+      >
+        <Card pad="8px 24px 16px" style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
+          <div style={{ flex: 1, overflowY: "auto", paddingTop: 8 }}>
+            {dayKeys.length === 0 ? (
+              <div style={{ color: T.muted, fontSize: 12, padding: "40px 0", textAlign: "center" }}>
+                No transactions match the filters.
+              </div>
+            ) : (
+              dayKeys.map((key) => {
+                const items = groups[key];
+                const d = parseLocalDay(key);
+                // Day-header total only sums GEL successful payments; rows
+                // for foreign-currency purchases or declines are included
+                // in the list but can't be meaningfully added together, so
+                // the header is explicitly labelled as "GEL" to avoid
+                // claiming the total represents everything visible below.
+                const gelSuccessItems = items.filter(
+                  (t) => t.kind === "payment" && t.currency === "GEL" && t.amount !== null
+                );
+                const total = gelSuccessItems.reduce((s, t) => s + (t.amount || 0), 0);
+                const hasGelActivity = gelSuccessItems.length > 0;
+                const diff = Math.floor((today.getTime() - d.getTime()) / 86400000);
+                const label =
+                  diff === 0
+                    ? "Today"
+                    : diff === 1
+                    ? "Yesterday"
+                    : d.toLocaleString("en-US", { weekday: "long", month: "short", day: "numeric" });
+                return (
+                  <div key={key}>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "baseline",
+                        padding: "14px 0 8px",
+                        borderBottom: `1px solid ${T.line}`,
+                        position: "sticky",
+                        top: 0,
+                        background: T.panel,
+                        zIndex: 1,
+                        gap: 10,
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "baseline", gap: 10, minWidth: 0, flexShrink: 1 }}>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: T.text, fontFamily: T.sans, whiteSpace: "nowrap" }}>
+                          {label}
+                        </span>
+                        <span style={{ fontSize: 10, color: T.dim, fontFamily: T.mono, letterSpacing: 0.3, whiteSpace: "nowrap" }}>
+                          {items.length} tx
+                        </span>
+                      </div>
+                      <span
+                        style={{
+                          fontSize: 12,
+                          color: T.muted,
+                          fontFamily: T.mono,
+                          fontVariantNumeric: "tabular-nums",
+                          whiteSpace: "nowrap",
+                          flexShrink: 0,
+                        }}
+                      >
+                        {hasGelActivity ? `−₾${total.toFixed(2)} GEL` : "—"}
+                      </span>
+                    </div>
+                    {items.map((t, i) => (
+                      <TxRow key={t.id} t={t} isLast={i === items.length - 1} onClick={() => setSelectedId(t.id)} />
+                    ))}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </Card>
+
+        {selected && (
+          <Card pad="22px 24px" style={{ display: "flex", flexDirection: "column" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 14 }}>
+              <CardLabel>{selected.kind === "failed" ? "Declined payment" : "Payment"}</CardLabel>
+              <button
+                onClick={() => setSelectedId(null)}
+                style={{ border: "none", background: "transparent", color: T.dim, cursor: "pointer", fontSize: 16 }}
+              >
+                ×
+              </button>
+            </div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: T.text, fontFamily: T.sans, letterSpacing: -0.8 }}>
+              {selected.merchant || "—"}
+            </div>
+            {selected.rawMerchant && (
+              <div style={{ fontSize: 11, color: T.dim, fontFamily: T.mono, marginTop: 4 }}>{selected.rawMerchant}</div>
+            )}
+            <div
+              style={{
+                marginTop: 18,
+                fontSize: 44,
+                fontWeight: 800,
+                color: selected.kind === "failed" ? T.accent : T.text,
+                fontFamily: T.sans,
+                letterSpacing: -1.6,
+                lineHeight: 1,
+              }}
+            >
+              {selected.kind === "failed"
+                ? "—"
+                : `${currencySymbol(selected.currency)}${(selected.amount ?? 0).toFixed(2)}`}
+            </div>
+            <div style={{ marginTop: 20, display: "flex", flexDirection: "column", gap: 10 }}>
+              {[
+                ["When", new Date(selected.transactionDate).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false })],
+                ["Card", selected.cardLastDigits ? `··${selected.cardLastDigits}` : "—"],
+                ["Bank", selected.bankSenderId],
+                ["Category", getCategory(selected.merchant, selected.rawMerchant).name],
+                selected.kind === "failed"
+                  ? ["Reason", selected.failureReason || "—"]
+                  : ["Points", selected.plusEarned ? `+${selected.plusEarned}` : "—"],
+              ].map(([k, v], i) => (
+                <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: `1px solid ${T.line}` }}>
+                  <span style={{ fontSize: 12, color: T.muted, fontFamily: T.sans }}>{k}</span>
+                  <span style={{ fontSize: 12.5, color: T.text, fontFamily: T.sans, fontWeight: 600 }}>{v}</span>
+                </div>
+              ))}
+            </div>
+            <div style={{ marginTop: 18 }}>
+              <CardLabel>Raw SMS</CardLabel>
+              <div
+                style={{
+                  marginTop: 8,
+                  padding: 12,
+                  background: T.panelAlt,
+                  borderRadius: T.rMd,
+                  fontFamily: T.mono,
+                  fontSize: 11,
+                  color: T.muted,
+                  lineHeight: 1.5,
+                  border: `1px solid ${T.line}`,
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                }}
+              >
+                {selected.rawMessage || "—"}
+              </div>
+            </div>
+          </Card>
+        )}
+      </div>
     </div>
   );
 }

@@ -2,7 +2,63 @@ import { Database } from "bun:sqlite";
 import { mkdir } from "fs/promises";
 import { dirname } from "path";
 import { defaultConfig } from "./config";
-import type { Transaction } from "./parser";
+import type { Transaction, TransactionKind } from "./parser";
+
+interface TransactionRow {
+  id: string;
+  message_id: number;
+  transaction_type: string;
+  amount: number;
+  currency: string;
+  merchant: string | null;
+  card_last_digits: string | null;
+  transaction_date: string;
+  message_timestamp: string;
+  raw_message: string;
+  plus_earned: number | null;
+  plus_total: number | null;
+}
+
+/**
+ * Honest shape of what `processed_transactions` actually stores. This is
+ * deliberately narrower than `Transaction` — the local cache persists
+ * only the columns the CLI + legacy webhook code were written against,
+ * so reconstructing a full Transaction here would require fabricating
+ * bankKey, direction, status, failureReason, balance and counterparty.
+ * InstantDB is the source of truth for those; state.db's only job is
+ * per-message-id dedup and a thin local backup.
+ */
+export interface StoredTransaction {
+  id: string;
+  messageId: number;
+  transactionType: TransactionKind;
+  amount: number;
+  currency: string;
+  merchant: string | null;
+  cardLastDigits: string | null;
+  transactionDate: Date;
+  messageTimestamp: Date;
+  rawMessage: string;
+  plusEarned: number | null;
+  plusTotal: number | null;
+}
+
+function rowToStoredTransaction(row: TransactionRow): StoredTransaction {
+  return {
+    id: row.id,
+    messageId: row.message_id,
+    transactionType: row.transaction_type as TransactionKind,
+    amount: row.amount,
+    currency: row.currency,
+    merchant: row.merchant,
+    cardLastDigits: row.card_last_digits,
+    transactionDate: new Date(row.transaction_date),
+    messageTimestamp: new Date(row.message_timestamp),
+    rawMessage: row.raw_message,
+    plusEarned: row.plus_earned,
+    plusTotal: row.plus_total,
+  };
+}
 
 export interface SyncState {
   senderId: string;
@@ -144,77 +200,23 @@ export class StateDb {
   /**
    * Get transactions that haven't been sent via webhook
    */
-  getUnsyncedTransactions(): Transaction[] {
+  getUnsyncedTransactions(): StoredTransaction[] {
     const rows = this.db
       .query("SELECT * FROM processed_transactions WHERE webhook_sent = 0")
-      .all() as Array<{
-      id: string;
-      message_id: number;
-      transaction_type: string;
-      amount: number;
-      currency: string;
-      merchant: string | null;
-      card_last_digits: string | null;
-      transaction_date: string;
-      message_timestamp: string;
-      raw_message: string;
-      plus_earned: number | null;
-      plus_total: number | null;
-    }>;
-
-    return rows.map((row) => ({
-      id: row.id,
-      messageId: row.message_id,
-      transactionType: row.transaction_type as Transaction["transactionType"],
-      amount: row.amount,
-      currency: row.currency,
-      merchant: row.merchant,
-      cardLastDigits: row.card_last_digits,
-      transactionDate: new Date(row.transaction_date),
-      messageTimestamp: new Date(row.message_timestamp),
-      rawMessage: row.raw_message,
-      plusEarned: row.plus_earned,
-      plusTotal: row.plus_total,
-    }));
+      .all() as TransactionRow[];
+    return rows.map((row) => rowToStoredTransaction(row));
   }
 
   /**
    * Get all processed transactions
    */
-  getAllTransactions(limit: number = 1000): Transaction[] {
+  getAllTransactions(limit: number = 1000): StoredTransaction[] {
     const rows = this.db
       .query(
         "SELECT * FROM processed_transactions ORDER BY transaction_date DESC LIMIT ?"
       )
-      .all(limit) as Array<{
-      id: string;
-      message_id: number;
-      transaction_type: string;
-      amount: number;
-      currency: string;
-      merchant: string | null;
-      card_last_digits: string | null;
-      transaction_date: string;
-      message_timestamp: string;
-      raw_message: string;
-      plus_earned: number | null;
-      plus_total: number | null;
-    }>;
-
-    return rows.map((row) => ({
-      id: row.id,
-      messageId: row.message_id,
-      transactionType: row.transaction_type as Transaction["transactionType"],
-      amount: row.amount,
-      currency: row.currency,
-      merchant: row.merchant,
-      cardLastDigits: row.card_last_digits,
-      transactionDate: new Date(row.transaction_date),
-      messageTimestamp: new Date(row.message_timestamp),
-      rawMessage: row.raw_message,
-      plusEarned: row.plus_earned,
-      plusTotal: row.plus_total,
-    }));
+      .all(limit) as TransactionRow[];
+    return rows.map((row) => rowToStoredTransaction(row));
   }
 
   /**

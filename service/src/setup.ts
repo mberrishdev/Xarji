@@ -19,11 +19,13 @@ const CONFIG_DIR = join(HOME, ".xarji");
 const SERVICE_DIR = resolve(import.meta.dir, "..");
 const CLIENT_DIR = resolve(SERVICE_DIR, "..", "client");
 
-// Georgian bank SMS sender IDs
+// Georgian bank SMS sender IDs. These are the literal sender strings as they
+// appear in macOS Messages.app; pick them carefully — "TBC" matches nothing,
+// the real sender is "TBC SMS".
 const KNOWN_BANKS: { id: string; name: string }[] = [
   { id: "SOLO", name: "Bank of Georgia (Solo)" },
   { id: "BOG", name: "Bank of Georgia" },
-  { id: "TBC", name: "TBC Bank" },
+  { id: "TBC SMS", name: "TBC Bank" },
   { id: "LIBERTY", name: "Liberty Bank" },
   { id: "CREDO", name: "Credo Bank" },
   { id: "BASISBANK", name: "Basis Bank" },
@@ -186,29 +188,119 @@ async function setup() {
   tui.step(5, totalSteps, "Setting Up InstantDB");
   tui.println();
 
+  // Bootstrap namespaces on the InstantDB app.
+  //
+  // When @instantdb/admin is initialised with a `schema`, it sets
+  // `throw-on-missing-attrs?: true` on every transaction. On a brand-new
+  // InstantDB app (no attributes yet), this rejects the first write. The
+  // workaround is to do the initial write WITHOUT a schema so the server
+  // auto-creates the attributes, then the rest of the app can use the
+  // schema normally.
+  //
+  // We bootstrap every namespace the client or service writes to so that
+  // nothing blows up on first use (adding a bank sender, creating a
+  // category, etc.).
   await tui.spinner("Pushing schema to InstantDB", async () => {
-    const db = init({ appId, adminToken, schema });
+    const bootstrapDb = init({ appId, adminToken });
 
-    // Create and delete a test record to ensure schema is applied
-    const testId = id();
-    await db.transact(
-      db.tx.payments[testId].update({
-        transactionId: "xarji-setup-test",
-        transactionType: "payment",
-        amount: 0,
-        currency: "GEL",
-        merchant: "Schema Test",
-        cardLastDigits: "0000",
-        transactionDate: Date.now(),
-        messageTimestamp: Date.now(),
-        syncedAt: Date.now(),
-        plusEarned: 0,
-        plusTotal: 0,
-        bankSenderId: "TEST",
-        rawMessage: "Setup schema push",
-      })
-    );
-    await db.transact(db.tx.payments[testId].delete());
+    const now = Date.now();
+    const seed: Array<{ table: string; data: Record<string, unknown> }> = [
+      {
+        table: "payments",
+        data: {
+          transactionId: "xarji-setup-test",
+          transactionType: "payment",
+          amount: 0,
+          currency: "GEL",
+          merchant: "Schema Test",
+          cardLastDigits: "0000",
+          transactionDate: now,
+          messageTimestamp: now,
+          syncedAt: now,
+          plusEarned: 0,
+          plusTotal: 0,
+          bankSenderId: "TEST",
+          rawMessage: "Setup schema push",
+        },
+      },
+      {
+        table: "failedPayments",
+        data: {
+          transactionId: "xarji-setup-test-failed",
+          transactionType: "payment_failed",
+          currency: "GEL",
+          merchant: "Schema Test",
+          cardLastDigits: "0000",
+          failureReason: "setup-bootstrap",
+          balance: 0,
+          transactionDate: now,
+          messageTimestamp: now,
+          syncedAt: now,
+          bankSenderId: "TEST",
+          rawMessage: "Setup schema push (failed)",
+        },
+      },
+      {
+        table: "categories",
+        data: {
+          name: "__setup__",
+          color: "#000000",
+          icon: "·",
+          isDefault: false,
+        },
+      },
+      {
+        table: "bankSenders",
+        data: {
+          senderId: "__SETUP__",
+          displayName: "Setup Bootstrap",
+          enabled: false,
+          createdAt: now,
+        },
+      },
+      {
+        table: "credits",
+        data: {
+          transactionId: "xarji-setup-test-credit",
+          transactionType: "transfer_in",
+          amount: 0,
+          currency: "GEL",
+          counterparty: "Schema Test",
+          cardLastDigits: "0000",
+          transactionDate: now,
+          messageTimestamp: now,
+          syncedAt: now,
+          bankSenderId: "TEST",
+          rawMessage: "Setup schema push (credit)",
+        },
+      },
+    ];
+
+    for (const { table, data } of seed) {
+      const rowId = id();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const tx = (bootstrapDb.tx as any)[table][rowId];
+      await bootstrapDb.transact(tx.update(data));
+      await bootstrapDb.transact(tx.delete());
+    }
+
+    // Second pass: now that every attribute exists, reconnect WITH the
+    // schema so the server-side attribute metadata (unique() on
+    // transactionId, indexed() on amount / currency / transactionDate /
+    // bankSenderId / merchant / counterparty) actually gets registered.
+    //
+    // Without this pass, a fresh InstantDB app has the attributes but no
+    // uniqueness constraints — so the in-memory dedup cache in
+    // instant-sync.ts becomes the only guard against duplicate rows
+    // when `~/.xarji/state.db` is deleted and the service re-syncs.
+    const schemaDb = init({ appId, adminToken, schema });
+    for (const { table, data } of seed) {
+      const rowId = id();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const tx = (schemaDb.tx as any)[table][rowId];
+      await schemaDb.transact(tx.update(data));
+      await schemaDb.transact(tx.delete());
+    }
   });
 
   tui.success("Schema pushed successfully");

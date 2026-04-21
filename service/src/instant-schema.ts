@@ -41,6 +41,21 @@ const schema = i.schema({
       bankSenderId: i.string().indexed(),
       rawMessage: i.string(),
     }),
+
+    // Incoming money (salary, deposits, transfers received)
+    credits: i.entity({
+      transactionId: i.string().unique(),
+      transactionType: i.string(),
+      amount: i.number().indexed(),
+      currency: i.string().indexed(),
+      counterparty: i.string().optional().indexed(),
+      cardLastDigits: i.string().optional(),
+      transactionDate: i.date().indexed(),
+      messageTimestamp: i.date(),
+      syncedAt: i.date(),
+      bankSenderId: i.string().indexed(),
+      rawMessage: i.string(),
+    }),
   },
   links: {},
 });

@@ -89,9 +89,21 @@ export class ExpenseTrackerService {
           );
 
           if (newTransactions.length === 0) {
-            // Still update sync state even if no new transactions
-            const maxMessageId = Math.max(...messages.map((m) => m.messageId));
-            this.stateDb!.updateSyncState(senderId, maxMessageId);
+            // Nothing parsed in this batch. Advance last_message_id ONLY if we
+            // know we've seen these messages before (any parsed at all this
+            // run). Otherwise leave it pinned so that adding a new parser
+            // later can retroactively pick up old messages.
+            //
+            // Note: we also de-dup via `isProcessed`, so any already-parsed
+            // transaction won't be written twice even if we re-fetch it.
+            if (success.length > 0) {
+              const maxParsedId = Math.max(...success.map((tx) => tx.messageId));
+              this.stateDb!.updateSyncState(senderId, maxParsedId);
+            } else {
+              console.log(
+                `[Service] ${senderId}: no parseable messages in this batch — leaving last_message_id at ${lastMessageId} so a future parser upgrade can retry.`
+              );
+            }
             continue;
           }
 
@@ -109,9 +121,13 @@ export class ExpenseTrackerService {
             console.log(`[Service] Synced ${syncResults.instantdb.syncedCount} to InstantDB`);
           }
 
-          // Update sync state
-          const maxMessageId = Math.max(...messages.map((m) => m.messageId));
-          this.stateDb!.updateSyncState(senderId, maxMessageId);
+          // Advance last_message_id to the highest message ID we successfully
+          // parsed. We intentionally do NOT jump to `max(messages.map(m => m.messageId))`
+          // even though those messages are newer — if the parser can't handle
+          // them today, advancing would permanently skip them after a future
+          // parser upgrade.
+          const maxParsedId = Math.max(...success.map((tx) => tx.messageId));
+          this.stateDb!.updateSyncState(senderId, maxParsedId);
 
           totalNewTransactions += newTransactions.length;
 
