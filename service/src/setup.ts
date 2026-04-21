@@ -10,6 +10,7 @@ import { join, resolve } from "path";
 import { mkdir, writeFile, access } from "fs/promises";
 import { existsSync } from "fs";
 import { init, id } from "@instantdb/admin";
+import schema from "./instant-schema";
 import { StateDb, ensureStateDbDir } from "./state-db";
 import * as tui from "./tui";
 
@@ -281,6 +282,24 @@ async function setup() {
       const tx = (bootstrapDb.tx as any)[table][rowId];
       await bootstrapDb.transact(tx.update(data));
       await bootstrapDb.transact(tx.delete());
+    }
+
+    // Second pass: now that every attribute exists, reconnect WITH the
+    // schema so the server-side attribute metadata (unique() on
+    // transactionId, indexed() on amount / currency / transactionDate /
+    // bankSenderId / merchant / counterparty) actually gets registered.
+    //
+    // Without this pass, a fresh InstantDB app has the attributes but no
+    // uniqueness constraints — so the in-memory dedup cache in
+    // instant-sync.ts becomes the only guard against duplicate rows
+    // when `~/.xarji/state.db` is deleted and the service re-syncs.
+    const schemaDb = init({ appId, adminToken, schema });
+    for (const { table, data } of seed) {
+      const rowId = id();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const tx = (schemaDb.tx as any)[table][rowId];
+      await schemaDb.transact(tx.update(data));
+      await schemaDb.transact(tx.delete());
     }
   });
 
