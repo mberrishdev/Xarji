@@ -21,11 +21,11 @@ export function Settings() {
 
   const senderCounts = useMemo(() => {
     const m: Record<string, number> = {};
-    for (const p of [...payments, ...failedPayments]) {
+    for (const p of [...payments, ...failedPayments, ...credits]) {
       m[p.bankSenderId] = (m[p.bankSenderId] || 0) + 1;
     }
     return m;
-  }, [payments, failedPayments]);
+  }, [payments, failedPayments, credits]);
 
   const handleAddSender = async () => {
     if (!newSenderId.trim()) return;
@@ -251,7 +251,12 @@ export function Settings() {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             {[
               { k: "Messages.app", v: "~/Library/Messages/chat.db", hint: "service reads on macOS", ok: true },
-              { k: "InstantDB", v: "connected · live", hint: `${payments.length + failedPayments.length} rows`, ok: true },
+              {
+                k: "InstantDB",
+                v: "connected · live",
+                hint: `${payments.length + failedPayments.length + credits.length} rows`,
+                ok: true,
+              },
               { k: "Local backup", v: "~/.xarji/transactions.json", hint: "written by the service", ok: true },
               { k: "Parser", v: "bun service", hint: "see service logs for details", ok: true },
             ].map((d) => (
