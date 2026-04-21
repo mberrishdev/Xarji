@@ -1,0 +1,223 @@
+/**
+ * Localhost HTTP server.
+ *
+ * Serves the React client (from embedded assets when running as a
+ * compiled binary, from client/dist/ on disk otherwise) and exposes a
+ * small JSON API the dashboard + menu-bar app consume.
+ *
+ * Always binds 127.0.0.1 — never 0.0.0.0 — so the local network cannot
+ * reach the dashboard. This is a single-user local app; access control
+ * is "the user owns the loopback interface."
+ */
+
+import { file } from "bun";
+import { existsSync } from "node:fs";
+import { join, resolve } from "node:path";
+import type { Config } from "./config";
+import type { ExpenseTrackerService } from "./service";
+import { allBanks } from "./parser";
+import { CLIENT_ASSETS } from "./generated/client-assets";
+
+export interface HttpServerOptions {
+  port: number;
+  config: Config;
+  service: ExpenseTrackerService | null;
+  // `configured` is separate from `service` because we always start the
+  // HTTP server first; the parser only spins up when config is valid.
+  configured: boolean;
+}
+
+interface HealthResponse {
+  state: "unconfigured" | "running" | "paused" | "error";
+  message?: string;
+  senders: string[];
+  transactionCount: number;
+  lastSync: string | null;
+  running: boolean;
+}
+
+function loggedIp(req: Request): string {
+  return req.headers.get("x-forwarded-for") || "local";
+}
+
+function json(value: unknown, init?: ResponseInit): Response {
+  return new Response(JSON.stringify(value), {
+    ...init,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+      ...(init?.headers || {}),
+    },
+  });
+}
+
+function notFound(): Response {
+  return new Response("Not found", { status: 404 });
+}
+
+// When the generated module is populated the server reads bytes through
+// Bun.file(path) where `path` is the string returned by the file-type
+// import — that string resolves correctly inside a compiled binary.
+//
+// When the module is empty (checked-in placeholder, dev mode), fall back
+// to serving from client/dist/ on disk.
+const DEV_CLIENT_DIST = resolve(import.meta.dir, "..", "..", "client", "dist");
+const HAS_EMBEDDED_ASSETS = Object.keys(CLIENT_ASSETS).length > 0;
+
+function resolveAssetPath(urlPath: string): string | null {
+  const normalized = urlPath === "" || urlPath === "/" ? "/" : urlPath;
+  if (HAS_EMBEDDED_ASSETS) {
+    return CLIENT_ASSETS[normalized] ?? null;
+  }
+  const candidate = normalized === "/" ? "index.html" : normalized.replace(/^\/+/, "");
+  const full = join(DEV_CLIENT_DIST, candidate);
+  return existsSync(full) ? full : null;
+}
+
+function contentTypeFor(urlPath: string): string {
+  // The bare root maps to index.html; treat it explicitly so the browser
+  // doesn't render the HTML as a binary download.
+  if (urlPath === "/" || urlPath.endsWith(".html")) return "text/html; charset=utf-8";
+  if (urlPath.endsWith(".js") || urlPath.endsWith(".mjs")) return "text/javascript; charset=utf-8";
+  if (urlPath.endsWith(".css")) return "text/css; charset=utf-8";
+  if (urlPath.endsWith(".svg")) return "image/svg+xml";
+  if (urlPath.endsWith(".png")) return "image/png";
+  if (urlPath.endsWith(".ico")) return "image/x-icon";
+  if (urlPath.endsWith(".json")) return "application/json; charset=utf-8";
+  if (urlPath.endsWith(".woff2")) return "font/woff2";
+  return "application/octet-stream";
+}
+
+async function serveAsset(urlPath: string): Promise<Response> {
+  const assetPath = resolveAssetPath(urlPath);
+  if (!assetPath) {
+    // SPA fallback: any unknown non-API path serves index.html so the
+    // React router can render the correct screen.
+    const indexPath = resolveAssetPath("/index.html");
+    if (!indexPath) return notFound();
+    return new Response(file(indexPath), {
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-store",
+      },
+    });
+  }
+  const headers: Record<string, string> = { "content-type": contentTypeFor(urlPath) };
+  // Hashed asset filenames (Vite emits `index-<hash>.js` etc.) are
+  // content-addressed so they can safely be cached forever.
+  if (/\/assets\/[^/]+-[A-Za-z0-9_-]{6,}\.[a-z]+$/.test(urlPath)) {
+    headers["cache-control"] = "public, max-age=31536000, immutable";
+  } else {
+    headers["cache-control"] = "no-store";
+  }
+  return new Response(file(assetPath), { headers });
+}
+
+/**
+ * Build the redacted config view for GET /api/config. Admin token and
+ * any other secret fields are replaced with a stable indicator so the
+ * dashboard can show "configured" without being able to read the token.
+ */
+function redactConfig(config: Config): Record<string, unknown> {
+  return {
+    bankSenderIds: config.bankSenderIds,
+    messagesDbPath: config.messagesDbPath,
+    localBackupPath: config.localBackupPath,
+    pollIntervalMs: config.pollIntervalMs,
+    instantdb: {
+      enabled: config.instantdb.enabled,
+      appId: config.instantdb.appId,
+      adminToken: config.instantdb.adminToken ? "[redacted]" : "",
+    },
+    webhook: {
+      enabled: config.webhook.enabled,
+      url: config.webhook.url,
+    },
+  };
+}
+
+function buildHealth(opts: HttpServerOptions): HealthResponse {
+  if (!opts.configured) {
+    return {
+      state: "unconfigured",
+      senders: [],
+      transactionCount: 0,
+      lastSync: null,
+      running: false,
+    };
+  }
+  const status = opts.service?.getStatus();
+  return {
+    state: status?.running ? "running" : "paused",
+    senders: opts.config.bankSenderIds,
+    transactionCount: status?.transactionCount ?? 0,
+    lastSync: status?.lastSync ? status.lastSync.toISOString() : null,
+    running: !!status?.running,
+  };
+}
+
+export interface HttpServerHandle {
+  port: number;
+  url: string;
+  stop(): void;
+}
+
+export function startHttpServer(opts: HttpServerOptions): HttpServerHandle {
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: opts.port,
+    async fetch(req) {
+      const url = new URL(req.url);
+      const path = url.pathname;
+
+      // API surface. All endpoints live under /api/.
+      if (path === "/api/health") {
+        return json(buildHealth(opts));
+      }
+      if (path === "/api/config") {
+        return json(redactConfig(opts.config));
+      }
+      if (path === "/api/banks") {
+        return json(
+          allBanks().map((b) => ({ bankKey: b.bankKey, senderIds: b.senderIds }))
+        );
+      }
+      if (path === "/api/setup") {
+        // PR 1 ships a GET stub that reports config presence; POST + the
+        // schema-driven wizard land in PR 2.
+        return json({
+          configured: opts.configured,
+          schema: null,
+        });
+      }
+      if (path.startsWith("/api/")) {
+        return json({ error: "unknown endpoint" }, { status: 404 });
+      }
+
+      // Static assets + SPA fallback.
+      if (req.method !== "GET" && req.method !== "HEAD") {
+        return new Response("Method not allowed", { status: 405 });
+      }
+      return serveAsset(path);
+    },
+    error(err) {
+      console.error("[http] server error:", err);
+      return new Response("Internal error", { status: 500 });
+    },
+  });
+
+  // Bun.serve.port is typed as `number | undefined` but in practice it's
+  // always populated after serve() returns. Coerce through the requested
+  // port so the return type is honest.
+  const boundPort = server.port ?? opts.port;
+  const url = `http://127.0.0.1:${boundPort}`;
+  console.log(`[http] listening on ${url} (${HAS_EMBEDDED_ASSETS ? "embedded" : "dev"} assets)`);
+
+  return {
+    port: boundPort,
+    url,
+    stop: () => {
+      server.stop(true);
+    },
+  };
+}

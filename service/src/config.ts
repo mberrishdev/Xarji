@@ -91,9 +91,24 @@ export async function saveConfig(config: Partial<Config>): Promise<void> {
 }
 
 export const CONFIG_DIR = join(home, ".xarji");
+export const CONFIG_PATH = join(CONFIG_DIR, "config.json");
 export const LAUNCHD_PLIST_PATH = join(
   home,
   "Library",
   "LaunchAgents",
   "com.xarji.plist"
 );
+
+/**
+ * True if a real config file exists on disk. The service treats the
+ * absence of ~/.xarji/config.json as "unconfigured" and serves just the
+ * HTTP layer + onboarding UI until the user completes setup, rather
+ * than silently running against baked-in defaults.
+ */
+export function hasSavedConfig(): boolean {
+  try {
+    return require("fs").existsSync(CONFIG_PATH);
+  } catch {
+    return false;
+  }
+}

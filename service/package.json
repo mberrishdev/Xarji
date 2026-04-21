@@ -12,7 +12,9 @@
     "status": "bun run src/cli.ts status",
     "test-parse": "bun run src/cli.ts test",
     "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:embed": "bun run ../scripts/embed-assets.ts",
+    "build:binary": "bun build --compile --target=bun-darwin-arm64 src/index.ts --outfile dist/xarji"
   },
   "dependencies": {
     "@instantdb/admin": "latest",
