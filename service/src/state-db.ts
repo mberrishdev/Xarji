@@ -4,6 +4,55 @@ import { dirname } from "path";
 import { defaultConfig } from "./config";
 import type { Transaction } from "./parser";
 
+interface TransactionRow {
+  id: string;
+  message_id: number;
+  transaction_type: string;
+  amount: number;
+  currency: string;
+  merchant: string | null;
+  card_last_digits: string | null;
+  transaction_date: string;
+  message_timestamp: string;
+  raw_message: string;
+  plus_earned: number | null;
+  plus_total: number | null;
+}
+
+/**
+ * Map a row from `processed_transactions` into a Transaction object.
+ * `state.db` only stores the legacy columns; newer fields (bankKey,
+ * direction, status, counterparty) are derived or defaulted because
+ * the local cache is only used for dedup + backup, not analytics.
+ */
+function rowToTransaction(row: TransactionRow): Transaction {
+  const kind = row.transaction_type as Transaction["transactionType"];
+  const status: Transaction["status"] = kind === "payment_failed" ? "failed" : "success";
+  const direction: Transaction["direction"] =
+    kind === "transfer_in" || kind === "deposit" ? "in" : "out";
+  return {
+    id: row.id,
+    messageId: row.message_id,
+    bankKey: "?",
+    bankSenderId: "?",
+    transactionType: kind,
+    status,
+    direction,
+    amount: row.amount,
+    currency: row.currency,
+    merchant: row.merchant,
+    cardLastDigits: row.card_last_digits,
+    transactionDate: new Date(row.transaction_date),
+    messageTimestamp: new Date(row.message_timestamp),
+    rawMessage: row.raw_message,
+    failureReason: null,
+    balance: null,
+    plusEarned: row.plus_earned,
+    plusTotal: row.plus_total,
+    counterparty: null,
+  };
+}
+
 export interface SyncState {
   senderId: string;
   lastMessageId: number;
@@ -147,35 +196,8 @@ export class StateDb {
   getUnsyncedTransactions(): Transaction[] {
     const rows = this.db
       .query("SELECT * FROM processed_transactions WHERE webhook_sent = 0")
-      .all() as Array<{
-      id: string;
-      message_id: number;
-      transaction_type: string;
-      amount: number;
-      currency: string;
-      merchant: string | null;
-      card_last_digits: string | null;
-      transaction_date: string;
-      message_timestamp: string;
-      raw_message: string;
-      plus_earned: number | null;
-      plus_total: number | null;
-    }>;
-
-    return rows.map((row) => ({
-      id: row.id,
-      messageId: row.message_id,
-      transactionType: row.transaction_type as Transaction["transactionType"],
-      amount: row.amount,
-      currency: row.currency,
-      merchant: row.merchant,
-      cardLastDigits: row.card_last_digits,
-      transactionDate: new Date(row.transaction_date),
-      messageTimestamp: new Date(row.message_timestamp),
-      rawMessage: row.raw_message,
-      plusEarned: row.plus_earned,
-      plusTotal: row.plus_total,
-    }));
+      .all() as TransactionRow[];
+    return rows.map((row) => rowToTransaction(row));
   }
 
   /**
@@ -186,35 +208,8 @@ export class StateDb {
       .query(
         "SELECT * FROM processed_transactions ORDER BY transaction_date DESC LIMIT ?"
       )
-      .all(limit) as Array<{
-      id: string;
-      message_id: number;
-      transaction_type: string;
-      amount: number;
-      currency: string;
-      merchant: string | null;
-      card_last_digits: string | null;
-      transaction_date: string;
-      message_timestamp: string;
-      raw_message: string;
-      plus_earned: number | null;
-      plus_total: number | null;
-    }>;
-
-    return rows.map((row) => ({
-      id: row.id,
-      messageId: row.message_id,
-      transactionType: row.transaction_type as Transaction["transactionType"],
-      amount: row.amount,
-      currency: row.currency,
-      merchant: row.merchant,
-      cardLastDigits: row.card_last_digits,
-      transactionDate: new Date(row.transaction_date),
-      messageTimestamp: new Date(row.message_timestamp),
-      rawMessage: row.raw_message,
-      plusEarned: row.plus_earned,
-      plusTotal: row.plus_total,
-    }));
+      .all(limit) as TransactionRow[];
+    return rows.map((row) => rowToTransaction(row));
   }
 
   /**
