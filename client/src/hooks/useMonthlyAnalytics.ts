@@ -74,8 +74,10 @@ export function useMonthStats(my: MonthYear) {
 
     // Filter to GEL before summing: foreign-currency amounts (USD/EUR) can't
     // be added to a GEL total without a conversion, and summing them raw
-    // would inflate the number. `count` stays unfiltered so the "N transactions"
-    // hint still reflects everything that happened this month.
+    // would inflate the number. Count + average track the same GEL set as
+    // the total so every displayed number on the hero card is on the same
+    // currency basis — otherwise "daily average" would be a GEL sum divided
+    // by an all-currency count.
     const currentPayments = payments.filter((p) => inRange(p.transactionDate, interval));
     const currentFailed = failed.filter((p) => inRange(p.transactionDate, interval));
     const prevPayments = payments.filter((p) => inRange(p.transactionDate, prevInterval));
@@ -84,12 +86,12 @@ export function useMonthStats(my: MonthYear) {
     const prevGelPayments = prevPayments.filter((p) => p.currency === "GEL");
 
     const total = currentGelPayments.reduce((s, p) => s + p.amount, 0);
-    const count = currentPayments.length;
+    const count = currentGelPayments.length;
     const failedCount = currentFailed.length;
     const avg = count > 0 ? total / count : 0;
 
     const prevTotal = prevGelPayments.reduce((s, p) => s + p.amount, 0);
-    const prevCount = prevPayments.length;
+    const prevCount = prevGelPayments.length;
     const totalChange = prevTotal > 0 ? ((total - prevTotal) / prevTotal) * 100 : 0;
     const countChange = prevCount > 0 ? ((count - prevCount) / prevCount) * 100 : 0;
 

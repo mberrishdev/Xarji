@@ -24,9 +24,13 @@ export function useMonthCredits(my: MonthYear) {
     const monthCredits = credits.filter((c) =>
       isWithinInterval(new Date(c.transactionDate), { start, end })
     );
+    // `total` and `count` describe the same GEL slice so the hero card's
+    // "N incoming transactions" matches the "+₾X earned" right above it.
+    // `credits` returns the full list regardless of currency so the feed
+    // doesn't silently drop USD/EUR income rows.
     const gelCredits = monthCredits.filter((c) => c.currency === "GEL");
     const total = gelCredits.reduce((s, c) => s + c.amount, 0);
-    const count = monthCredits.length;
+    const count = gelCredits.length;
     return { total, count, credits: monthCredits };
   }, [data?.credits, my.month, my.year]);
 }
