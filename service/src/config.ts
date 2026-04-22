@@ -61,18 +61,32 @@ export const defaultConfig: Config = {
   pollIntervalMs: 60000, // 1 minute fallback
 };
 
-// Load config from file if exists, otherwise use defaults
+// Load config from file if exists, otherwise use defaults.
+//
+// When no config file is present but the process has valid InstantDB
+// credentials in its environment (INSTANT_APP_ID + INSTANT_ADMIN_TOKEN),
+// synthesise a config that treats InstantDB as enabled. Without this,
+// deployments that rely on env-var configuration would still get
+// `enabled: false` in defaults and the parser would skip the InstantDB
+// sync target entirely.
 export function loadConfig(): Config {
   const configPath = join(home, ".xarji", "config.json");
 
   try {
-    const file = Bun.file(configPath);
-    // Use sync read for initialization
     const text = require("fs").readFileSync(configPath, "utf-8");
     const userConfig = JSON.parse(text);
     return { ...defaultConfig, ...userConfig };
   } catch {
-    // Config file doesn't exist or is invalid, use defaults
+    // Config file doesn't exist or is invalid.
+  }
+
+  const envAppId = process.env.INSTANT_APP_ID || "";
+  const envAdminToken = process.env.INSTANT_ADMIN_TOKEN || "";
+  if (envAppId && envAdminToken) {
+    return {
+      ...defaultConfig,
+      instantdb: { enabled: true, appId: envAppId, adminToken: envAdminToken },
+    };
   }
 
   return defaultConfig;
@@ -91,9 +105,37 @@ export async function saveConfig(config: Partial<Config>): Promise<void> {
 }
 
 export const CONFIG_DIR = join(home, ".xarji");
+export const CONFIG_PATH = join(CONFIG_DIR, "config.json");
 export const LAUNCHD_PLIST_PATH = join(
   home,
   "Library",
   "LaunchAgents",
   "com.xarji.plist"
 );
+
+/**
+ * True if a real config file exists on disk. Narrow check — prefer
+ * `isConfigured()` unless you specifically care about the file.
+ */
+export function hasSavedConfig(): boolean {
+  try {
+    return require("fs").existsSync(CONFIG_PATH);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * True if this install has any usable configuration — either a
+ * ~/.xarji/config.json written by the setup wizard, or
+ * INSTANT_APP_ID + INSTANT_ADMIN_TOKEN env vars for a deployment that
+ * prefers environment-driven configuration. When both are absent the
+ * service serves just the HTTP layer + onboarding UI so the user can
+ * complete setup from the browser.
+ */
+export function isConfigured(): boolean {
+  if (hasSavedConfig()) return true;
+  const envAppId = process.env.INSTANT_APP_ID || "";
+  const envAdminToken = process.env.INSTANT_ADMIN_TOKEN || "";
+  return !!(envAppId && envAdminToken);
+}
