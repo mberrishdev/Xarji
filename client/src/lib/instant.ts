@@ -61,8 +61,31 @@ const schema = i.schema({
   links: {},
 });
 
-// Initialize InstantDB
-const APP_ID = import.meta.env.VITE_INSTANT_APP_ID || "f78a0d50-1945-431a-91ea-96f68570d4a5";
+// Resolve the InstantDB app id at page-load time, not at bundle time.
+// The service injects `window.__XARJI_APP_ID__` into the served
+// index.html with whatever is currently in ~/.xarji/config.json — so
+// a fresh onboarding that writes a new app id just requires a reload,
+// not a rebuild of the client bundle.
+//
+// Fallback order:
+//   1. window.__XARJI_APP_ID__  (runtime-injected by the service)
+//   2. VITE_INSTANT_APP_ID       (build-time env for dev-mode `bun run dev`)
+//   3. Hard-coded sentinel       (will produce an obvious failure if
+//                                 neither of the above is populated)
+declare global {
+  interface Window {
+    __XARJI_APP_ID__?: string;
+  }
+}
+
+function resolveAppId(): string {
+  if (typeof window !== "undefined" && window.__XARJI_APP_ID__) {
+    return window.__XARJI_APP_ID__;
+  }
+  return import.meta.env.VITE_INSTANT_APP_ID || "f78a0d50-1945-431a-91ea-96f68570d4a5";
+}
+
+const APP_ID = resolveAppId();
 
 export const db = init({ appId: APP_ID, schema });
 

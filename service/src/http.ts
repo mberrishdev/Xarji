@@ -14,9 +14,12 @@ import { file } from "bun";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Config } from "./config";
-import type { ExpenseTrackerService } from "./service";
+import { loadConfig } from "./config";
+import { ExpenseTrackerService } from "./service";
 import { allBanks } from "./parser";
 import { CLIENT_ASSETS } from "./generated/client-assets";
+import { serializeSchema, type FieldMap } from "./setup/schema";
+import { applySetup } from "./setup/apply";
 
 export interface HttpServerOptions {
   port: number;
@@ -25,6 +28,20 @@ export interface HttpServerOptions {
   // `configured` is separate from `service` because we always start the
   // HTTP server first; the parser only spins up when config is valid.
   configured: boolean;
+}
+
+/**
+ * Build the redacted form of current config values used by the
+ * onboarding UI to pre-populate the wizard on a re-run. We intentionally
+ * don't echo the admin token back so a "reconfigure" flow still has to
+ * re-paste the secret.
+ */
+function currentSetupValues(config: Config): FieldMap {
+  return {
+    instantAppId: config.instantdb.appId || "",
+    instantAdminToken: config.instantdb.adminToken ? "" : "",
+    bankSenderIds: config.bankSenderIds,
+  };
 }
 
 interface HealthResponse {
@@ -88,19 +105,51 @@ function contentTypeFor(urlPath: string): string {
   return "application/octet-stream";
 }
 
-async function serveAsset(urlPath: string): Promise<Response> {
+/**
+ * Inject runtime globals into served HTML. Vite inlines
+ * VITE_INSTANT_APP_ID at build time, so a pre-compiled client bundle
+ * would otherwise always hit the baked-in app id regardless of what
+ * the user entered in the onboarding wizard. Injecting a small
+ * `<script>` tag with the *currently-configured* InstantDB app id
+ * lets client/src/lib/instant.ts prefer window.__XARJI_APP_ID__ and
+ * pick up the live value on the next page reload.
+ *
+ * The runtime config is read per-request so swapping config via
+ * POST /api/setup takes effect without a service restart.
+ */
+async function serveHtmlWithRuntimeConfig(assetPath: string, opts: HttpServerOptions): Promise<Response> {
+  const original = await file(assetPath).text();
+  const appId = opts.config.instantdb.appId ?? "";
+  // Escape `</` in the JSON payload so a pathological app id couldn't
+  // close the <script> tag early. JSON.stringify never produces `</`,
+  // but belt-and-braces is cheap here.
+  const appIdJson = JSON.stringify(appId).replace(/<\//g, "<\\/");
+  const snippet = `<script>window.__XARJI_APP_ID__=${appIdJson};</script>`;
+  const injected = original.includes("</head>")
+    ? original.replace("</head>", `${snippet}</head>`)
+    : `${snippet}${original}`;
+  return new Response(injected, {
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+    },
+  });
+}
+
+async function serveAsset(urlPath: string, opts: HttpServerOptions): Promise<Response> {
   const assetPath = resolveAssetPath(urlPath);
   if (!assetPath) {
     // SPA fallback: any unknown non-API path serves index.html so the
     // React router can render the correct screen.
     const indexPath = resolveAssetPath("/index.html");
     if (!indexPath) return notFound();
-    return new Response(file(indexPath), {
-      headers: {
-        "content-type": "text/html; charset=utf-8",
-        "cache-control": "no-store",
-      },
-    });
+    return serveHtmlWithRuntimeConfig(indexPath, opts);
+  }
+  // HTML entries (/, index.html) get runtime config injected so the
+  // dashboard boots against the right InstantDB app after onboarding.
+  const isHtml = urlPath === "/" || urlPath.endsWith(".html");
+  if (isHtml) {
+    return serveHtmlWithRuntimeConfig(assetPath, opts);
   }
   const headers: Record<string, string> = { "content-type": contentTypeFor(urlPath) };
   // Hashed asset filenames (Vite emits `index-<hash>.js` etc.) are
@@ -182,13 +231,51 @@ export function startHttpServer(opts: HttpServerOptions): HttpServerHandle {
           allBanks().map((b) => ({ bankKey: b.bankKey, senderIds: b.senderIds }))
         );
       }
-      if (path === "/api/setup") {
-        // PR 1 ships a GET stub that reports config presence; POST + the
-        // schema-driven wizard land in PR 2.
+      if (path === "/api/setup" && req.method === "GET") {
         return json({
           configured: opts.configured,
-          schema: null,
+          schema: serializeSchema(),
+          currentValues: currentSetupValues(opts.config),
         });
+      }
+      if (path === "/api/setup" && req.method === "POST") {
+        let body: unknown;
+        try {
+          body = await req.json();
+        } catch {
+          return json({ ok: false, error: "Request body must be valid JSON" }, { status: 400 });
+        }
+        const values = (body ?? {}) as FieldMap;
+        const result = await applySetup(values);
+        if (!result.ok) {
+          return json(result, { status: 400 });
+        }
+        // Swap the running process into the configured state in place:
+        // reload config from disk, spin up the parser, and flip the
+        // flags so /api/health starts reporting "running" without the
+        // user having to restart the binary.
+        try {
+          const newConfig = loadConfig();
+          const newService = new ExpenseTrackerService(newConfig);
+          await newService.start();
+          // Stop any previous instance just in case this was a reconfigure.
+          opts.service?.stop();
+          opts.config = newConfig;
+          opts.service = newService;
+          opts.configured = true;
+        } catch (err) {
+          // Config is written but the parser failed to start. The user
+          // can recover by restarting the binary; we don't roll back.
+          return json(
+            {
+              ok: true,
+              completed: result.completed,
+              warning: `Config saved but parser failed to start: ${String(err)}. Restart the binary.`,
+            },
+            { status: 200 }
+          );
+        }
+        return json(result);
       }
       if (path.startsWith("/api/")) {
         return json({ error: "unknown endpoint" }, { status: 404 });
@@ -198,7 +285,7 @@ export function startHttpServer(opts: HttpServerOptions): HttpServerHandle {
       if (req.method !== "GET" && req.method !== "HEAD") {
         return new Response("Method not allowed", { status: 405 });
       }
-      return serveAsset(path);
+      return serveAsset(path, opts);
     },
     error(err) {
       console.error("[http] server error:", err);
