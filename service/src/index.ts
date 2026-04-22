@@ -1,11 +1,15 @@
 import { ExpenseTrackerService } from "./service";
-import { hasSavedConfig, loadConfig } from "./config";
+import { isConfigured, loadConfig } from "./config";
 import { startHttpServer, type HttpServerHandle } from "./http";
 
 const DEFAULT_PORT = Number(process.env.XARJI_PORT ?? 8721);
 
 const config = loadConfig();
-const configured = hasSavedConfig();
+// Treat the install as configured when either a config file exists OR
+// INSTANT_APP_ID + INSTANT_ADMIN_TOKEN are set in the environment. The
+// latter keeps pre-existing env-driven deployments working — before this
+// check they were stuck permanently in onboarding mode.
+const configured = isConfigured();
 
 let service: ExpenseTrackerService | null = null;
 let http: HttpServerHandle | null = null;
@@ -42,7 +46,7 @@ if (service) {
   await service.start();
   console.log("\n[Main] Service is running. Press Ctrl+C to stop.");
 } else {
-  console.log("\n[Main] No config at ~/.xarji/config.json yet.");
+  console.log("\n[Main] No configuration yet (neither ~/.xarji/config.json nor INSTANT_APP_ID/INSTANT_ADMIN_TOKEN env vars are set).");
   console.log(`[Main] Open ${http.url} to finish setup.`);
   console.log("[Main] Press Ctrl+C to stop.\n");
 }
