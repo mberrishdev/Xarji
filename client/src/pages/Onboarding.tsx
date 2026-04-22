@@ -148,9 +148,19 @@ export function Onboarding({ onComplete }: { onComplete?: () => void }) {
         if (body.fieldErrors) setFieldErrors(body.fieldErrors);
         return;
       }
-      // Success. The service swaps itself into the configured state
-      // in place; a full reload reconnects the dashboard against the
-      // now-populated InstantDB and the Layout is rendered normally.
+      // A `warning` with ok=true means config was saved but the
+      // parser failed to start in-process (for example Full Disk
+      // Access not granted yet). Reloading now would land the user
+      // back on this wizard with no explanation — surface the
+      // warning inline instead and let them recover before retrying.
+      if (body.warning) {
+        setSubmitError(body.warning);
+        return;
+      }
+      // Clean success: the service swaps itself into the configured
+      // state in place; a full reload reconnects the dashboard
+      // against the now-populated InstantDB and the Layout is
+      // rendered normally.
       onComplete?.();
       window.location.reload();
     } catch (err) {

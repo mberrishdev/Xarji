@@ -105,19 +105,51 @@ function contentTypeFor(urlPath: string): string {
   return "application/octet-stream";
 }
 
-async function serveAsset(urlPath: string): Promise<Response> {
+/**
+ * Inject runtime globals into served HTML. Vite inlines
+ * VITE_INSTANT_APP_ID at build time, so a pre-compiled client bundle
+ * would otherwise always hit the baked-in app id regardless of what
+ * the user entered in the onboarding wizard. Injecting a small
+ * `<script>` tag with the *currently-configured* InstantDB app id
+ * lets client/src/lib/instant.ts prefer window.__XARJI_APP_ID__ and
+ * pick up the live value on the next page reload.
+ *
+ * The runtime config is read per-request so swapping config via
+ * POST /api/setup takes effect without a service restart.
+ */
+async function serveHtmlWithRuntimeConfig(assetPath: string, opts: HttpServerOptions): Promise<Response> {
+  const original = await file(assetPath).text();
+  const appId = opts.config.instantdb.appId ?? "";
+  // Escape `</` in the JSON payload so a pathological app id couldn't
+  // close the <script> tag early. JSON.stringify never produces `</`,
+  // but belt-and-braces is cheap here.
+  const appIdJson = JSON.stringify(appId).replace(/<\//g, "<\\/");
+  const snippet = `<script>window.__XARJI_APP_ID__=${appIdJson};</script>`;
+  const injected = original.includes("</head>")
+    ? original.replace("</head>", `${snippet}</head>`)
+    : `${snippet}${original}`;
+  return new Response(injected, {
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+    },
+  });
+}
+
+async function serveAsset(urlPath: string, opts: HttpServerOptions): Promise<Response> {
   const assetPath = resolveAssetPath(urlPath);
   if (!assetPath) {
     // SPA fallback: any unknown non-API path serves index.html so the
     // React router can render the correct screen.
     const indexPath = resolveAssetPath("/index.html");
     if (!indexPath) return notFound();
-    return new Response(file(indexPath), {
-      headers: {
-        "content-type": "text/html; charset=utf-8",
-        "cache-control": "no-store",
-      },
-    });
+    return serveHtmlWithRuntimeConfig(indexPath, opts);
+  }
+  // HTML entries (/, index.html) get runtime config injected so the
+  // dashboard boots against the right InstantDB app after onboarding.
+  const isHtml = urlPath === "/" || urlPath.endsWith(".html");
+  if (isHtml) {
+    return serveHtmlWithRuntimeConfig(assetPath, opts);
   }
   const headers: Record<string, string> = { "content-type": contentTypeFor(urlPath) };
   // Hashed asset filenames (Vite emits `index-<hash>.js` etc.) are
@@ -253,7 +285,7 @@ export function startHttpServer(opts: HttpServerOptions): HttpServerHandle {
       if (req.method !== "GET" && req.method !== "HEAD") {
         return new Response("Method not allowed", { status: 405 });
       }
-      return serveAsset(path);
+      return serveAsset(path, opts);
     },
     error(err) {
       console.error("[http] server error:", err);

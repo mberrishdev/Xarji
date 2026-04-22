@@ -15,7 +15,8 @@
 
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile, unlink } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { init, id } from "@instantdb/admin";
 import schema from "../instant-schema";
 import { StateDb, ensureStateDbDir } from "../state-db";
@@ -170,7 +171,62 @@ export async function applySetup(
   const { appId, adminToken, bankSenderIds } = extract(values);
   const completed: ApplyStep[] = ["validate"];
 
-  // 2. Write ~/.xarji/config.json
+  // Ordering rationale: the InstantDB bootstrap steps (which can fail on
+  // bad credentials, permission errors, network blips) must run BEFORE
+  // the config file is written to disk. Otherwise a failed bootstrap
+  // leaves ~/.xarji/config.json on the filesystem and the next launch
+  // treats the install as configured, skipping onboarding and booting
+  // against credentials the user already knows don't work.
+
+  // 2a. Bootstrap attributes without schema. `@instantdb/admin` sets
+  //     `throw-on-missing-attrs?` when initialised with a schema, so a
+  //     brand-new app needs this schemaless pass to auto-create attrs.
+  try {
+    const bootstrapDb = init({ appId, adminToken });
+    for (const { table, data } of bootstrapSeed()) {
+      const rowId = id();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const tx = (bootstrapDb.tx as any)[table][rowId];
+      await bootstrapDb.transact(tx.update(data));
+      await bootstrapDb.transact(tx.delete());
+    }
+    completed.push("bootstrap-attrs");
+    await report("bootstrap-attrs", true);
+  } catch (err) {
+    await report("bootstrap-attrs", false, String(err));
+    return { ok: false, completed, failedAt: "bootstrap-attrs", error: String(err) };
+  }
+
+  // 2b. Second pass with the schema applied so uniqueness + indexes
+  //     register on the now-existing attributes.
+  try {
+    const schemaDb = init({ appId, adminToken, schema });
+    for (const { table, data } of bootstrapSeed()) {
+      const rowId = id();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const tx = (schemaDb.tx as any)[table][rowId];
+      await schemaDb.transact(tx.update(data));
+      await schemaDb.transact(tx.delete());
+    }
+    completed.push("bootstrap-schema");
+    await report("bootstrap-schema", true);
+  } catch (err) {
+    await report("bootstrap-schema", false, String(err));
+    return { ok: false, completed, failedAt: "bootstrap-schema", error: String(err) };
+  }
+
+  // From here on we touch the filesystem; if anything fails we rollback
+  // the config file so the next launch sees the install as unconfigured.
+  const rollbackConfig = async () => {
+    try {
+      if (existsSync(CONFIG_PATH)) await unlink(CONFIG_PATH);
+    } catch {
+      // Best-effort — if we can't delete it, the user will have to
+      // remove it by hand to retry onboarding. Logged by the caller.
+    }
+  };
+
+  // 3. Write ~/.xarji/config.json
   try {
     await mkdir(CONFIG_DIR, { recursive: true });
     const config = {
@@ -190,7 +246,7 @@ export async function applySetup(
     return { ok: false, completed, failedAt: "config", error: String(err) };
   }
 
-  // 3. Write .env files — best-effort, don't hard-fail the whole setup
+  // 4. Write .env files — best-effort, don't hard-fail the whole setup
   try {
     await writeFile(
       join(SERVICE_DIR, ".env"),
@@ -210,7 +266,7 @@ export async function applySetup(
     await report("env", false, String(err));
   }
 
-  // 4. Initialise state.db
+  // 5. Initialise state.db
   try {
     await ensureStateDbDir();
     const stateDb = new StateDb();
@@ -219,44 +275,8 @@ export async function applySetup(
     await report("state-db", true);
   } catch (err) {
     await report("state-db", false, String(err));
+    await rollbackConfig();
     return { ok: false, completed, failedAt: "state-db", error: String(err) };
-  }
-
-  // 5a. Bootstrap attributes without schema. `@instantdb/admin` sets
-  //     `throw-on-missing-attrs?` when initialised with a schema, so a
-  //     brand-new app needs this schemaless pass to auto-create attrs.
-  try {
-    const bootstrapDb = init({ appId, adminToken });
-    for (const { table, data } of bootstrapSeed()) {
-      const rowId = id();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const tx = (bootstrapDb.tx as any)[table][rowId];
-      await bootstrapDb.transact(tx.update(data));
-      await bootstrapDb.transact(tx.delete());
-    }
-    completed.push("bootstrap-attrs");
-    await report("bootstrap-attrs", true);
-  } catch (err) {
-    await report("bootstrap-attrs", false, String(err));
-    return { ok: false, completed, failedAt: "bootstrap-attrs", error: String(err) };
-  }
-
-  // 5b. Second pass with the schema applied so uniqueness + indexes
-  //     register on the now-existing attributes.
-  try {
-    const schemaDb = init({ appId, adminToken, schema });
-    for (const { table, data } of bootstrapSeed()) {
-      const rowId = id();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const tx = (schemaDb.tx as any)[table][rowId];
-      await schemaDb.transact(tx.update(data));
-      await schemaDb.transact(tx.delete());
-    }
-    completed.push("bootstrap-schema");
-    await report("bootstrap-schema", true);
-  } catch (err) {
-    await report("bootstrap-schema", false, String(err));
-    return { ok: false, completed, failedAt: "bootstrap-schema", error: String(err) };
   }
 
   return { ok: true, completed };
