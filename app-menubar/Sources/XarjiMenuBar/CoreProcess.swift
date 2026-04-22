@@ -135,9 +135,18 @@ final class CoreProcess: @unchecked Sendable {
         let logger = self.logger
         handle.readabilityHandler = { fh in
             let data = fh.availableData
-            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else {
+            if data.isEmpty {
+                // EOF — the child closed its end of the pipe. If we
+                // leave the readabilityHandler in place the fd stays
+                // registered forever and the closure keeps firing
+                // every time the kernel reports "readable" on the
+                // closed descriptor. That accumulates across every
+                // respawn, so clear the handler and close our end.
+                fh.readabilityHandler = nil
+                try? fh.close()
                 return
             }
+            guard let text = String(data: data, encoding: .utf8) else { return }
             for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
                 logger.info("\(prefix, privacy: .public) \(String(line), privacy: .public)")
             }

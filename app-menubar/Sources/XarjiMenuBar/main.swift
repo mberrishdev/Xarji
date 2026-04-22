@@ -15,12 +15,19 @@ app.setActivationPolicy(.accessory)
 // hook does NOT fire on its own — AppKit only plumbs that through for
 // graceful `NSApplication.terminate()` paths. Route SIGTERM into the
 // graceful path so the child xarji-core is stopped instead of
-// orphaned. Signal handlers can only do async-signal-safe work, so
-// we just post to the main queue and let the delegate do the teardown.
-signal(SIGTERM) { _ in
-    DispatchQueue.main.async {
-        NSApplication.shared.terminate(nil)
-    }
+// orphaned.
+//
+// Use a GCD signal source instead of a raw `signal(2)` handler. The
+// handler block attached to a DispatchSource runs on the main dispatch
+// queue *outside* signal context, so it can legitimately call
+// NSApplication.terminate and other non-async-signal-safe APIs.
+// `SIG_IGN` is installed first so the default SIGTERM disposition
+// (immediate process termination) doesn't race the dispatch source.
+signal(SIGTERM, SIG_IGN)
+let sigtermSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+sigtermSource.setEventHandler {
+    NSApplication.shared.terminate(nil)
 }
+sigtermSource.resume()
 
 app.run()
