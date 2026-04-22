@@ -121,15 +121,27 @@ find "$APP" -name '._*' -delete
 
 # Ad-hoc sign by default so the binary can actually run without the
 # "unidentified developer" Gatekeeper warning on the dev's own machine.
-# PR 4 will swap this for Developer ID signing + notarization.
 if [[ "$SIGNING_MODE" == "identity" && -n "$APP_IDENTITY" ]]; then
   CODESIGN_ARGS=(--force --timestamp --options runtime --sign "$APP_IDENTITY")
 else
   CODESIGN_ARGS=(--force --sign "-")
 fi
 
+# xarji-core is a Bun-compiled binary. Bun JITs JavaScript at runtime,
+# which under hardened runtime requires allow-jit + allow-unsigned-
+# executable-memory entitlements. Without these the child dies on
+# first allocation with "Ran out of executable memory" and the menu
+# bar app reports "unreachable" because nothing is listening on the
+# dashboard port. Entitlements are scoped to xarji-core only — the
+# Swift menu-bar shell doesn't JIT and shouldn't carry JIT rights.
+CORE_ENTITLEMENTS="$ROOT/Scripts/xarji-core.entitlements"
+CORE_CODESIGN_ARGS=("${CODESIGN_ARGS[@]}")
+if [[ "$SIGNING_MODE" == "identity" && -f "$CORE_ENTITLEMENTS" ]]; then
+  CORE_CODESIGN_ARGS+=(--entitlements "$CORE_ENTITLEMENTS")
+fi
+
 # Sign the inner xarji-core first so the outer signature covers it.
-codesign "${CODESIGN_ARGS[@]}" "$APP/Contents/MacOS/xarji-core"
+codesign "${CORE_CODESIGN_ARGS[@]}" "$APP/Contents/MacOS/xarji-core"
 codesign "${CODESIGN_ARGS[@]}" "$APP"
 
 echo ""

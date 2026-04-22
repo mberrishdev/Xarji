@@ -8,3 +8,9 @@ dist/
 # .release.env.example is committed so others know what variables are
 # expected; .release.env with real values stays on the releaser's Mac.
 scripts/release/.release.env
+
+# App Store Connect API private key used for notarization. Must never
+# be committed — anyone with the .p8 can submit signed binaries under
+# your team id until the key is revoked.
+keys/
+
