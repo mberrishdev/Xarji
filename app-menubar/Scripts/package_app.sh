@@ -61,6 +61,32 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 BUILD_TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 GIT_COMMIT=$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
+# Generate the .icns from the committed PNG so the source of truth
+# stays a PNG (editable) and the binary .icns gets regenerated per
+# build. sips resizes for each slot macOS wants; iconutil bundles them.
+ICON_SRC="$ROOT/AppIcon.png"
+ICON_PLIST_KEY=""
+if [[ -f "$ICON_SRC" ]]; then
+  ICONSET_DIR=$(mktemp -d -t xarji-iconset-XXXXXX)
+  # iconutil expects these exact filenames — don't rename them.
+  sips -z 16 16     "$ICON_SRC" --out "$ICONSET_DIR/icon_16x16.png"      >/dev/null
+  sips -z 32 32     "$ICON_SRC" --out "$ICONSET_DIR/icon_16x16@2x.png"   >/dev/null
+  sips -z 32 32     "$ICON_SRC" --out "$ICONSET_DIR/icon_32x32.png"      >/dev/null
+  sips -z 64 64     "$ICON_SRC" --out "$ICONSET_DIR/icon_32x32@2x.png"   >/dev/null
+  sips -z 128 128   "$ICON_SRC" --out "$ICONSET_DIR/icon_128x128.png"    >/dev/null
+  sips -z 256 256   "$ICON_SRC" --out "$ICONSET_DIR/icon_128x128@2x.png" >/dev/null
+  sips -z 256 256   "$ICON_SRC" --out "$ICONSET_DIR/icon_256x256.png"    >/dev/null
+  sips -z 512 512   "$ICON_SRC" --out "$ICONSET_DIR/icon_256x256@2x.png" >/dev/null
+  sips -z 512 512   "$ICON_SRC" --out "$ICONSET_DIR/icon_512x512.png"    >/dev/null
+  sips -z 1024 1024 "$ICON_SRC" --out "$ICONSET_DIR/icon_512x512@2x.png" >/dev/null
+  mv "$ICONSET_DIR" "${ICONSET_DIR}.iconset"
+  iconutil -c icns "${ICONSET_DIR}.iconset" -o "$APP/Contents/Resources/AppIcon.icns"
+  rm -rf "${ICONSET_DIR}.iconset"
+  ICON_PLIST_KEY="    <key>CFBundleIconFile</key><string>AppIcon</string>"
+else
+  echo "WARN: no AppIcon.png at $ICON_SRC — building without a bundle icon"
+fi
+
 # LSUIElement=true hides the Dock icon so the app is menu-bar-only.
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -74,6 +100,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>${MARKETING_VERSION}</string>
     <key>CFBundleVersion</key><string>${BUILD_NUMBER}</string>
+${ICON_PLIST_KEY}
     <key>LSMinimumSystemVersion</key><string>${MACOS_MIN_VERSION}</string>
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>
