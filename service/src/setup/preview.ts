@@ -82,15 +82,22 @@ export function previewSenders(
   const sampleLimit = opts.sampleLimit ?? 5;
 
   // Distinguish "file doesn't exist" from "no permission to read it"
-  // so the UI can link to the right System Settings pane.
+  // so the UI can link to the right System Settings pane. On first
+  // launch accessSync typically fails with EPERM/EACCES because the
+  // sandbox blocks chat.db until Full Disk Access is granted — that's
+  // the permission branch, not a missing-file branch.
   try {
     accessSync(dbPath);
-  } catch {
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    const denied = code === "EACCES" || code === "EPERM";
     return {
       ok: false,
       banks: [],
-      error: `Messages database not found at ${dbPath}`,
-      errorKind: "messages-db-missing",
+      error: denied
+        ? "Xarji can't read the Messages database. Grant Full Disk Access to this app in System Settings → Privacy & Security → Full Disk Access."
+        : `Messages database not found at ${dbPath}`,
+      errorKind: denied ? "full-disk-access" : "messages-db-missing",
     };
   }
 
