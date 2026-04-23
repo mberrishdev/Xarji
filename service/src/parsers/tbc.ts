@@ -30,6 +30,26 @@ import {
 
 const BANK_KEY = "TBC";
 
+/**
+ * Normalize Georgian → Latin so existing regex continues to work
+ */
+const NORMALIZATION_MAP: Record<string, string> = {
+  "ჩარიცხვა": "Charicxva",
+  "გადარიცხვა": "Gadaricxva",
+  "სესხის დაფარვა": "Sesxis daparva",
+  "საბარათე ოპერაცია": "Sabarate operacia",
+  "უარყოფილია": "uarkofilia",
+  "ნაშთი": "nashti",
+};
+
+function normalizeText(text: string): string {
+  let normalized = text;
+  for (const [geo, lat] of Object.entries(NORMALIZATION_MAP)) {
+    normalized = normalized.replace(new RegExp(geo, "gi"), lat);
+  }
+  return normalized;
+}
+
 // Full loan repayment:
 //   "Sesxis daparva: 13345,29 GEL"
 const RE_LOAN_FULL = /Sesxis daparva:\s*([\d.,]+)\s*([A-Z]{3})/i;
@@ -49,8 +69,16 @@ const RE_INCOMING_AMOUNT = /Charicxva:\s*([\d.,]+)\s*([A-Z]{3})/i;
 // Failed card payment:
 //   "Sabarate operacia 9.99 USD uarkofilia."
 const RE_FAIL_AMOUNT = /Sabarate operacia\s*([\d.,]+)\s*([A-Z]{3})\s*uarkofilia/i;
+
+// ADD: Successful card payment (your missing case)
+const RE_CARD_PAYMENT = /^.*?\n([\d.,]+)\s*([A-Z]{3})\n/i;
+
+// ADD: Balance (supports "nashti" after normalization)
+const RE_BALANCE = /nashti:\s*([\d.,]+)\s*([A-Z]{3})/i;
+
 // failure reason, optional: "mizezi: baratit sargebloba shezgudulia."
 const RE_FAIL_REASON = /mizezi:\s*(.+)/i;
+
 // card: "SPACE DIGITAL CARD (***'5312')" or variants with ***NNNN / ****NNNN
 const RE_CARD_PARENS = /\(\s*\*{3,}'?(\d{3,4})'?\s*\)/;
 const RE_CARD_STARS = /\*{3,}(\d{3,4})/;
@@ -74,12 +102,31 @@ function detect(text: string): Detected | null {
   if (RE_LOAN_PARTIAL.test(text)) return { kind: "loan_repayment", status: "success" };
   if (/Gadaricxva:/i.test(text)) return { kind: "transfer_out", status: "success" };
   if (RE_INCOMING_AMOUNT.test(text)) return { kind: "transfer_in", status: "success" };
+  if (RE_CARD_PAYMENT.test(text) && (RE_CARD_PARENS.test(text) || RE_CARD_STARS.test(text))) {
+    return { kind: "payment", status: "success" };
+  }
+
   return null;
 }
 
 function parseCard(text: string): string | null {
   const m = text.match(RE_CARD_PARENS) ?? text.match(RE_CARD_STARS);
   return m ? m[1] : null;
+}
+
+function parseMerchantFromCard(text: string): string | null {
+  const lines = text.trim().split(/\r?\n/).map(stripTrailingNoise).filter(Boolean);
+  for (let i = 0; i < lines.length; i++) {
+    if (RE_CARD_STARS.test(lines[i])) {
+      return lines[i + 1] || null;
+    }
+  }
+  return null;
+}
+
+function parseBalance(text: string): number | null {
+  const m = text.match(RE_BALANCE);
+  return m ? parseFlexibleAmount(m[1]) : null;
 }
 
 function parseFailedMerchant(text: string): string | null {
@@ -115,7 +162,8 @@ function parseAccountFromLoan(text: string, partial: boolean): string | null {
 }
 
 function parse(raw: RawMessage): Transaction | null {
-  const text = raw.text;
+  const text = normalizeText(raw.text);
+
   const detected = detect(text);
   if (!detected) return null;
 
@@ -178,11 +226,24 @@ function parse(raw: RawMessage): Transaction | null {
       merchant = counterparty;
       break;
     }
+
+    case "payment": {
+      const m = text.match(RE_CARD_PAYMENT);
+      if (!m) return null;
+      amount = parseFlexibleAmount(m[1]);
+      currency = m[2];
+      merchant = parseMerchantFromCard(text);
+      counterparty = merchant;
+      break;
+    }
+
     default:
       return null;
   }
 
   if (amount === null) return null;
+
+  balance = balance ?? parseBalance(text);
 
   return {
     id: generateTransactionId(raw.messageId, text),
@@ -201,7 +262,7 @@ function parse(raw: RawMessage): Transaction | null {
       return ymd ? mergeDateAndTime(ymd, raw.timestamp) : raw.timestamp;
     })(),
     messageTimestamp: raw.timestamp,
-    rawMessage: text,
+    rawMessage: raw.text,
     failureReason,
     balance,
     plusEarned: null,

@@ -161,6 +161,34 @@ describe("TBC parser — declined card payment (Sabarate operacia ... uarkofilia
   });
 });
 
+describe("TBC parser — successful card payment", () => {
+  const tx = tbcParser.parse(
+    mk(
+      350,
+      [
+        "20.00 GEL",
+        "VISA GOLD (***0792)",
+        "BIRD APP* PRELOAD",
+        "11/05/2024 14:29:45",
+        "ნაშთი: 2895.84 GEL",
+      ].join("\n")
+    )
+  )!;
+
+  test("classified as payment", () => {
+    expect(tx.transactionType).toBe("payment");
+    expect(tx.status).toBe("success");
+    expect(tx.direction).toBe("out");
+  });
+
+  test("extracts amount, currency, card digits and merchant", () => {
+    expect(tx.amount).toBe(20);
+    expect(tx.currency).toBe("GEL");
+    expect(tx.cardLastDigits).toBe("0792");
+    expect(tx.merchant).toBe("BIRD APP* PRELOAD");
+  });
+});
+
 describe("TBC parser — incoming (Charicxva:)", () => {
   test("with counterparty line", () => {
     const tx = tbcParser.parse(
