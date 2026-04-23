@@ -70,10 +70,10 @@ const RE_INCOMING_AMOUNT = /Charicxva:\s*([\d.,]+)\s*([A-Z]{3})/i;
 //   "Sabarate operacia 9.99 USD uarkofilia."
 const RE_FAIL_AMOUNT = /Sabarate operacia\s*([\d.,]+)\s*([A-Z]{3})\s*uarkofilia/i;
 
-// ADD: Successful card payment (your missing case)
+// Successful card payment (your missing case)
 const RE_CARD_PAYMENT = /^.*?\n([\d.,]+)\s*([A-Z]{3})\n/i;
 
-// ADD: Balance (supports "nashti" after normalization)
+// Balance (supports "nashti" after normalization)
 const RE_BALANCE = /nashti:\s*([\d.,]+)\s*([A-Z]{3})/i;
 
 // failure reason, optional: "mizezi: baratit sargebloba shezgudulia."
