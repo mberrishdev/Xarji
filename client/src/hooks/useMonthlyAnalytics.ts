@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { db } from "../lib/instant";
 import { DEFAULT_CATEGORIES, autoCategorize } from "../lib/utils";
 import { formatLocalDay } from "../ink/format";
+import { useConvertedPayments } from "./useTransactions";
 import {
   startOfMonth,
   endOfMonth,
@@ -60,11 +61,10 @@ export function useAvailableMonths() {
 }
 
 export function useMonthStats(my: MonthYear) {
-  const { data: paymentsData } = db.useQuery({ payments: {} });
+  const { payments } = useConvertedPayments();
   const { data: failedData } = db.useQuery({ failedPayments: {} });
 
   return useMemo(() => {
-    const payments = paymentsData?.payments || [];
     const failed = failedData?.failedPayments || [];
     const interval = getMonthInterval(my);
     const prevInterval = getMonthInterval(getPreviousMonth(my));
@@ -72,26 +72,28 @@ export function useMonthStats(my: MonthYear) {
     const inRange = (date: number, iv: { start: Date; end: Date }) =>
       isWithinInterval(new Date(date), iv);
 
-    // Filter to GEL before summing: foreign-currency amounts (USD/EUR) can't
-    // be added to a GEL total without a conversion, and summing them raw
-    // would inflate the number. Count + average track the same GEL set as
-    // the total so every displayed number on the hero card is on the same
-    // currency basis — otherwise "daily average" would be a GEL sum divided
-    // by an all-currency count.
-    const currentPayments = payments.filter((p) => inRange(p.transactionDate, interval));
-    const currentFailed = failed.filter((p) => inRange(p.transactionDate, interval));
-    const prevPayments = payments.filter((p) => inRange(p.transactionDate, prevInterval));
-
-    const currentGelPayments = currentPayments.filter((p) => p.currency === "GEL");
-    const prevGelPayments = prevPayments.filter((p) => p.currency === "GEL");
-
-    const total = currentGelPayments.reduce((s, p) => s + p.amount, 0);
-    const count = currentGelPayments.length;
-    const failedCount = currentFailed.length;
+    // Sum every currency converted to GEL via the NBG rate for each
+    // transaction's date. Rows still loading (`gelAmount === null`)
+    // skip the total this render, then snap in once the rate arrives.
+    let total = 0;
+    let count = 0;
+    let prevTotal = 0;
+    let prevCount = 0;
+    for (const p of payments) {
+      const inCur = inRange(p.transactionDate, interval);
+      const inPrev = !inCur && inRange(p.transactionDate, prevInterval);
+      if (!inCur && !inPrev) continue;
+      if (p.gelAmount === null) continue;
+      if (inCur) {
+        total += p.gelAmount;
+        count += 1;
+      } else {
+        prevTotal += p.gelAmount;
+        prevCount += 1;
+      }
+    }
+    const failedCount = failed.filter((p) => inRange(p.transactionDate, interval)).length;
     const avg = count > 0 ? total / count : 0;
-
-    const prevTotal = prevGelPayments.reduce((s, p) => s + p.amount, 0);
-    const prevCount = prevGelPayments.length;
     const totalChange = prevTotal > 0 ? ((total - prevTotal) / prevTotal) * 100 : 0;
     const countChange = prevCount > 0 ? ((count - prevCount) / prevCount) * 100 : 0;
 
@@ -105,14 +107,13 @@ export function useMonthStats(my: MonthYear) {
       totalChange,
       countChange,
     };
-  }, [paymentsData?.payments, failedData?.failedPayments, my.month, my.year]);
+  }, [payments, failedData?.failedPayments, my.month, my.year]);
 }
 
 export function useMonthSpendingByDay(my: MonthYear) {
-  const { data: paymentsData } = db.useQuery({ payments: {} });
+  const { payments } = useConvertedPayments();
 
   return useMemo(() => {
-    const payments = paymentsData?.payments || [];
     const interval = getMonthInterval(my);
 
     const monthPayments = payments.filter((p) =>
@@ -121,8 +122,9 @@ export function useMonthSpendingByDay(my: MonthYear) {
 
     const dailyTotals: Record<string, number> = {};
     for (const p of monthPayments) {
+      if (p.gelAmount === null) continue;
       const date = formatLocalDay(p.transactionDate);
-      dailyTotals[date] = (dailyTotals[date] || 0) + p.amount;
+      dailyTotals[date] = (dailyTotals[date] || 0) + p.gelAmount;
     }
 
     const daysInMonth = getDaysInMonth(new Date(my.year, my.month, 1));
@@ -133,14 +135,13 @@ export function useMonthSpendingByDay(my: MonthYear) {
     }
 
     return result;
-  }, [paymentsData?.payments, my.month, my.year]);
+  }, [payments, my.month, my.year]);
 }
 
 export function useMonthTopMerchants(my: MonthYear, limit: number = 10) {
-  const { data: paymentsData } = db.useQuery({ payments: {} });
+  const { payments } = useConvertedPayments();
 
   return useMemo(() => {
-    const payments = paymentsData?.payments || [];
     const interval = getMonthInterval(my);
 
     const monthPayments = payments.filter((p) =>
@@ -149,9 +150,10 @@ export function useMonthTopMerchants(my: MonthYear, limit: number = 10) {
 
     const merchantTotals: Record<string, { total: number; count: number }> = {};
     for (const p of monthPayments) {
+      if (p.gelAmount === null) continue;
       const merchant = p.merchant || "Unknown";
       if (!merchantTotals[merchant]) merchantTotals[merchant] = { total: 0, count: 0 };
-      merchantTotals[merchant].total += p.amount;
+      merchantTotals[merchant].total += p.gelAmount;
       merchantTotals[merchant].count += 1;
     }
 
@@ -159,15 +161,14 @@ export function useMonthTopMerchants(my: MonthYear, limit: number = 10) {
       .map(([name, data]) => ({ name, ...data }))
       .sort((a, b) => b.total - a.total)
       .slice(0, limit);
-  }, [paymentsData?.payments, my.month, my.year, limit]);
+  }, [payments, my.month, my.year, limit]);
 }
 
 export function useMonthCategoryAnalytics(my: MonthYear) {
-  const { data: paymentsData } = db.useQuery({ payments: {} });
+  const { payments } = useConvertedPayments();
   const { data: catData } = db.useQuery({ categories: {} });
 
   return useMemo(() => {
-    const payments = paymentsData?.payments || [];
     const categories = catData?.categories || [];
     const interval = getMonthInterval(my);
 
@@ -186,12 +187,13 @@ export function useMonthCategoryAnalytics(my: MonthYear) {
     }
 
     for (const payment of monthPayments) {
+      if (payment.gelAmount === null) continue;
       const categoryName = autoCategorize(payment.merchant ?? null);
       if (categoryTotals[categoryName]) {
-        categoryTotals[categoryName].total += payment.amount;
+        categoryTotals[categoryName].total += payment.gelAmount;
         categoryTotals[categoryName].count += 1;
       } else {
-        categoryTotals["Other"].total += payment.amount;
+        categoryTotals["Other"].total += payment.gelAmount;
         categoryTotals["Other"].count += 1;
       }
     }
@@ -211,5 +213,5 @@ export function useMonthCategoryAnalytics(my: MonthYear) {
         percentage: totalSpent > 0 ? (cat.total / totalSpent) * 100 : 0,
       })),
     };
-  }, [paymentsData?.payments, catData?.categories, my.month, my.year]);
+  }, [payments, catData?.categories, my.month, my.year]);
 }

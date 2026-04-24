@@ -1,7 +1,8 @@
 import { useMemo } from "react";
-import { db } from "../lib/instant";
+import { db, type Payment } from "../lib/instant";
 import { groupBy, getDateGroup } from "../lib/utils";
 import { formatLocalDay } from "../ink/format";
+import { useGelConverter } from "../lib/exchangeRates";
 import { startOfMonth, endOfMonth, subMonths, isWithinInterval } from "date-fns";
 
 export function usePayments() {
@@ -13,6 +14,23 @@ export function usePayments() {
   }, [data?.payments]);
 
   return { payments, isLoading, error };
+}
+
+// Same as usePayments but with each row decorated with `gelAmount` —
+// the GEL-equivalent of `amount` after applying the NBG rate for the
+// transaction's date. Returns null while the rate is still loading;
+// aggregators treat null as "skip" so totals snap to the converted
+// value once rates arrive instead of briefly inflating.
+export type ConvertedPayment = Payment & { gelAmount: number | null };
+
+export function useConvertedPayments() {
+  const { payments, isLoading, error } = usePayments();
+  const toGel = useGelConverter();
+  const converted = useMemo<ConvertedPayment[]>(
+    () => payments.map((p) => ({ ...p, gelAmount: toGel(p.amount, p.currency, p.transactionDate) })),
+    [payments, toGel]
+  );
+  return { payments: converted, isLoading, error };
 }
 
 export function useFailedPayments() {

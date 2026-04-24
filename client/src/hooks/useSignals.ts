@@ -1,9 +1,9 @@
 import { useMemo } from "react";
 import { startOfMonth, endOfMonth, isWithinInterval, subDays } from "date-fns";
-import { usePayments, useFailedPayments } from "./useTransactions";
+import { useConvertedPayments, useFailedPayments } from "./useTransactions";
 
 export function useSignals() {
-  const { payments } = usePayments();
+  const { payments } = useConvertedPayments();
   const { failedPayments } = useFailedPayments();
 
   return useMemo(() => {
@@ -13,7 +13,12 @@ export function useSignals() {
     const inMonth = (ts: number) => isWithinInterval(new Date(ts), { start: monthStart, end: monthEnd });
 
     const monthFailed = failedPayments.filter((f) => inMonth(f.transactionDate));
-    const monthPayments = payments.filter((p) => inMonth(p.transactionDate) && p.currency === "GEL");
+    // For card/total math we need a GEL-equivalent amount, so rows still
+    // waiting on a rate (gelAmount === null) sit out. Largest-tx and
+    // new-merchant detection still see the full set: those don't sum
+    // amounts, they look at the row's existence + merchant string.
+    const monthPaymentsAll = payments.filter((p) => inMonth(p.transactionDate));
+    const monthPaymentsForSums = monthPaymentsAll.filter((p) => p.gelAmount !== null);
 
     const repeatedMap: Record<string, number> = {};
     for (const f of monthFailed) {
@@ -24,7 +29,9 @@ export function useSignals() {
       .filter(([, n]) => n >= 2)
       .map(([merchant, count]) => ({ merchant, count }));
 
-    const largeTx = [...monthPayments].sort((a, b) => b.amount - a.amount).slice(0, 4);
+    const largeTx = [...monthPaymentsForSums]
+      .sort((a, b) => (b.gelAmount as number) - (a.gelAmount as number))
+      .slice(0, 4);
 
     const ninetyStart = subDays(now, 90);
     const priorMerchants = new Set(
@@ -35,17 +42,17 @@ export function useSignals() {
     );
     const newMerchants = Array.from(
       new Set(
-        monthPayments
+        monthPaymentsAll
           .map((p) => p.merchant || "")
           .filter((m) => m && !priorMerchants.has(m))
       )
     );
 
     const cardTotals: Record<string, { total: number; count: number }> = {};
-    for (const p of monthPayments) {
+    for (const p of monthPaymentsForSums) {
       const c = p.cardLastDigits || "—";
       if (!cardTotals[c]) cardTotals[c] = { total: 0, count: 0 };
-      cardTotals[c].total += p.amount;
+      cardTotals[c].total += p.gelAmount as number;
       cardTotals[c].count += 1;
     }
     const cards = Object.entries(cardTotals)

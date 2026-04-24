@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useTheme, useViewport } from "../ink/theme";
 import { Card, PageHeader } from "../ink/primitives";
-import { usePayments } from "../hooks/useTransactions";
+import { useConvertedPayments } from "../hooks/useTransactions";
 import { getCategory } from "../lib/utils";
 import { isWithinInterval, startOfMonth, endOfMonth, format } from "date-fns";
 
@@ -11,7 +11,7 @@ export function Merchants() {
   const now = new Date();
   const monthStart = startOfMonth(now);
   const monthEnd = endOfMonth(now);
-  const { payments } = usePayments();
+  const { payments } = useConvertedPayments();
   const [search, setSearch] = useState("");
 
   const merchants = useMemo(() => {
@@ -29,7 +29,7 @@ export function Merchants() {
     };
     const map: Record<string, MerchantAgg> = {};
     for (const p of payments) {
-      if (p.currency !== "GEL") continue;
+      if (p.gelAmount === null) continue;
       if (!isWithinInterval(new Date(p.transactionDate), { start: monthStart, end: monthEnd })) continue;
       const key = p.merchant || "Unknown";
       const raw = p.rawMessage || "";
@@ -44,7 +44,7 @@ export function Merchants() {
       } else if (raw) {
         map[key].searchBlob += `\n${raw.toLowerCase()}`;
       }
-      map[key].total += p.amount;
+      map[key].total += p.gelAmount;
       map[key].count += 1;
     }
     return Object.values(map).sort((a, b) => b.total - a.total);
