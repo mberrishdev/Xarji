@@ -187,6 +187,30 @@ describe("TBC parser — successful card payment", () => {
     expect(tx.cardLastDigits).toBe("0792");
     expect(tx.merchant).toBe("BIRD APP* PRELOAD");
   });
+
+  test("parses first-line amount variant with cashback/piggy-bank tail lines", () => {
+    const t = tbcParser.parse(
+      mk(
+        351,
+        [
+          "9.90 GEL",
+          "ERTGULI VISA PLATINUM (***6582)",
+          "NIKORA",
+          "23/04/2026 19:02:15",
+          "ნაშთი: 43.79 GEL",
+          "დაგიბრუნდა 0.20 GEL",
+          "ერთგულ ყულაბაში გაქვს: 1.68 GEL",
+        ].join("\n")
+      )
+    )!;
+
+    expect(t.transactionType).toBe("payment");
+    expect(t.amount).toBe(9.9);
+    expect(t.currency).toBe("GEL");
+    expect(t.cardLastDigits).toBe("6582");
+    expect(t.merchant).toBe("NIKORA");
+    expect(t.balance).toBe(43.79);
+  });
 });
 
 describe("TBC parser — incoming (Charicxva:)", () => {
@@ -216,6 +240,24 @@ describe("TBC parser — incoming (Charicxva:)", () => {
   });
 });
 
+describe("TBC parser — self-transfers (საკუთარ ანგარიშებზე)", () => {
+  test("GEL self-transfer returns null", () => {
+    expect(
+      tbcParser.parse(mk(700, "საკუთარ ანგარიშებზე გადარიცხვა:\n1000.00 GEL\n02/02/2026"))
+    ).toBeNull();
+  });
+  test("USD self-transfer returns null", () => {
+    expect(
+      tbcParser.parse(mk(701, "საკუთარ ანგარიშებზე გადარიცხვა:\n74854.64 USD\n24/04/2026"))
+    ).toBeNull();
+  });
+  test("EUR self-transfer returns null", () => {
+    expect(
+      tbcParser.parse(mk(702, "საკუთარ ანგარიშებზე გადარიცხვა:\n1100.00 EUR\n11/02/2026"))
+    ).toBeNull();
+  });
+});
+
 describe("TBC parser — silently skipped messages", () => {
   test("card-expiry notice returns null", () => {
     const r = tbcParser.parse(
@@ -235,6 +277,105 @@ describe("TBC parser — silently skipped messages", () => {
   });
   test("fully irrelevant text returns null", () => {
     expect(tbcParser.parse(mk(503, "zzz"))).toBeNull();
+  });
+});
+
+describe("TBC parser — user-reported message", () => {
+  test("parses 9.90 GEL NIKORA with balance 3943.79", () => {
+    const t = tbcParser.parse(
+      mk(
+        352,
+        `9.90 GEL
+ERTGULI VISA PLATINUM (***6582)
+NIKORA
+23/04/2026 19:02:15
+ნაშთი: 3943.79 GEL
+დაგიბრუნდა 0.20 GEL
+ერთგულ ყულაბაში გაქვს: 1.68 GEL`
+      )
+    );
+
+    expect(t).not.toBeNull();
+    expect(t?.transactionType).toBe("payment");
+    expect(t?.amount).toBe(9.9);
+    expect(t?.currency).toBe("GEL");
+    expect(t?.cardLastDigits).toBe("6582");
+    expect(t?.merchant).toBe("NIKORA");
+    expect(t?.balance).toBe(3943.79);
+  });
+});
+
+describe("TBC parser — reversal (უკუგატარება:)", () => {
+  const tx = tbcParser.parse(
+    mk(
+      600,
+      [
+        "უკუგატარება:",
+        "7.90 GEL",
+        "VISA ERTGULI CLASSIC (***6531)",
+        "BOLTTAXI",
+        "02/02/2026 10:13:15",
+        "ნაშთი: 2864.48 GEL",
+      ].join("\n")
+    )
+  )!;
+
+  test("classified as reversal, direction in", () => {
+    expect(tx.transactionType).toBe("reversal");
+    expect(tx.direction).toBe("in");
+    expect(tx.status).toBe("success");
+  });
+  test("extracts amount and currency", () => {
+    expect(tx.amount).toBe(7.9);
+    expect(tx.currency).toBe("GEL");
+  });
+  test("extracts card digits and merchant", () => {
+    expect(tx.cardLastDigits).toBe("6531");
+    expect(tx.merchant).toBe("BOLTTAXI");
+  });
+  test("captures balance", () => {
+    expect(tx.balance).toBe(2864.48);
+  });
+
+  test("reversal without balance line", () => {
+    const t = tbcParser.parse(
+      mk(
+        601,
+        [
+          "უკუგატარება:",
+          "54.62 GEL",
+          "VISA ERTGULI CLASSIC (***6531)",
+          "BOLTFOOD",
+          "20/02/2026 19:32:28",
+          "ნაშთი: 2091.88 GEL",
+        ].join("\n")
+      )
+    )!;
+    expect(t.transactionType).toBe("reversal");
+    expect(t.direction).toBe("in");
+    expect(t.amount).toBe(54.62);
+    expect(t.merchant).toBe("BOLTFOOD");
+  });
+
+  test("reversal on TBC Concept card", () => {
+    const t = tbcParser.parse(
+      mk(
+        602,
+        [
+          "უკუგატარება:",
+          "4.00 GEL",
+          "TBC Concept MC World elite (***6109)",
+          "jetshr",
+          "22/04/2026 13:03:18",
+          "ნაშთი: 4.91 GEL",
+        ].join("\n")
+      )
+    )!;
+    expect(t.transactionType).toBe("reversal");
+    expect(t.direction).toBe("in");
+    expect(t.amount).toBe(4);
+    expect(t.cardLastDigits).toBe("6109");
+    expect(t.merchant).toBe("jetshr");
   });
 });
 

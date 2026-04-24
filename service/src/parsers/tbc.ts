@@ -12,6 +12,7 @@
  *   - `Gadaricxva:`                          — outgoing transfer     → transfer_out (out)
  *   - `Sabarate operacia … uarkofilia`       — declined card payment → payment_failed (out)
  *   - `Charicxva:`                           — incoming              → transfer_in (in)
+ *   - `Ukugatareba:`                         — card payment reversal → reversal (in)
  *
  * Marketing / notifications / security codes / card-expiry messages return
  * null so they're silently skipped.
@@ -40,6 +41,7 @@ const NORMALIZATION_MAP: Record<string, string> = {
   "საბარათე ოპერაცია": "Sabarate operacia",
   "უარყოფილია": "uarkofilia",
   "ნაშთი": "nashti",
+  "უკუგატარება": "Ukugatareba",
 };
 
 function normalizeText(text: string): string {
@@ -70,8 +72,14 @@ const RE_INCOMING_AMOUNT = /Charicxva:\s*([\d.,]+)\s*([A-Z]{3})/i;
 //   "Sabarate operacia 9.99 USD uarkofilia."
 const RE_FAIL_AMOUNT = /Sabarate operacia\s*([\d.,]+)\s*([A-Z]{3})\s*uarkofilia/i;
 
-// Successful card payment (your missing case)
-const RE_CARD_PAYMENT = /^.*?\n([\d.,]+)\s*([A-Z]{3})\n/i;
+// Successful card payment (amount is typically on the first line):
+//   "9.90 GEL\nERTGULI VISA PLATINUM (***6582)\nNIKORA\n23/04/2026 ..."
+const RE_CARD_PAYMENT = /^\s*([\d.,]+)\s*([A-Z]{3})\s*$/m;
+
+// Reversal (refund back to account): identical layout to card payment but
+// preceded by "Ukugatareba:" (after normalization). Must be detected first
+// so the generic RE_CARD_PAYMENT branch does not misclassify it as outgoing.
+const RE_REVERSAL = /Ukugatareba:/i;
 
 // Balance (supports "nashti" after normalization)
 const RE_BALANCE = /nashti:\s*([\d.,]+)\s*([A-Z]{3})/i;
@@ -102,6 +110,12 @@ function detect(text: string): Detected | null {
   if (RE_LOAN_PARTIAL.test(text)) return { kind: "loan_repayment", status: "success" };
   if (/Gadaricxva:/i.test(text)) return { kind: "transfer_out", status: "success" };
   if (RE_INCOMING_AMOUNT.test(text)) return { kind: "transfer_in", status: "success" };
+  // Reversal check must come before the generic card-payment check — the SMS
+  // layout is identical (amount line + card line + merchant) and RE_CARD_PAYMENT
+  // would otherwise match and produce a wrong outgoing direction.
+  if (RE_REVERSAL.test(text) && RE_CARD_PAYMENT.test(text)) {
+    return { kind: "reversal", status: "success" };
+  }
   if (RE_CARD_PAYMENT.test(text) && (RE_CARD_PARENS.test(text) || RE_CARD_STARS.test(text))) {
     return { kind: "payment", status: "success" };
   }
@@ -162,6 +176,10 @@ function parseAccountFromLoan(text: string, partial: boolean): string | null {
 }
 
 function parse(raw: RawMessage): Transaction | null {
+  // Self-transfers between the user's own TBC accounts are not spend/income
+  // events — skip them so they don't pollute the transaction list.
+  if (/საკუთარ ანგარიშებზე/.test(raw.text)) return null;
+
   const text = normalizeText(raw.text);
 
   const detected = detect(text);
@@ -227,7 +245,8 @@ function parse(raw: RawMessage): Transaction | null {
       break;
     }
 
-    case "payment": {
+    case "payment":
+    case "reversal": {
       const m = text.match(RE_CARD_PAYMENT);
       if (!m) return null;
       amount = parseFlexibleAmount(m[1]);
