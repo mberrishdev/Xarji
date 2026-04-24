@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { useTheme, useViewport } from "../ink/theme";
 import { Card, CardLabel, PageHeader } from "../ink/primitives";
 import { TxRow, type InkTx } from "../ink/TxRow";
-import { usePayments, useFailedPayments } from "../hooks/useTransactions";
+import { useConvertedPayments, useFailedPayments } from "../hooks/useTransactions";
 import { useBankSenders } from "../hooks/useBankSenders";
 import { DEFAULT_CATEGORIES, getCategory, categorizeId } from "../lib/utils";
 import { currencySymbol, formatLocalDay, parseLocalDay } from "../ink/format";
@@ -13,7 +13,7 @@ type TxKind = "all" | "payment" | "failed";
 export function Transactions() {
   const T = useTheme();
   const vp = useViewport();
-  const { payments } = usePayments();
+  const { payments } = useConvertedPayments();
   const { failedPayments } = useFailedPayments();
   const { senders } = useBankSenders();
 
@@ -249,16 +249,17 @@ export function Transactions() {
               dayKeys.map((key) => {
                 const items = groups[key];
                 const d = parseLocalDay(key);
-                // Day-header total only sums GEL successful payments; rows
-                // for foreign-currency purchases or declines are included
-                // in the list but can't be meaningfully added together, so
-                // the header is explicitly labelled as "GEL" to avoid
-                // claiming the total represents everything visible below.
-                const gelSuccessItems = items.filter(
-                  (t) => t.kind === "payment" && t.currency === "GEL" && t.amount !== null
-                );
-                const total = gelSuccessItems.reduce((s, t) => s + (t.amount || 0), 0);
-                const hasGelActivity = gelSuccessItems.length > 0;
+                // Day-header total sums every successful payment as a GEL
+                // equivalent (NBG rate for the row's date). Declines are
+                // skipped — they have no amount. Rows still waiting on a
+                // rate (gelAmount === null) are also skipped this render
+                // and snap into the total once the fetch resolves.
+                const successItems = items.filter((t) => t.kind === "payment");
+                const total = successItems.reduce((s, t) => {
+                  const p = payments.find((pp) => pp.id === t.id);
+                  return s + (p?.gelAmount ?? 0);
+                }, 0);
+                const hasGelActivity = total > 0;
                 const diff = Math.floor((today.getTime() - d.getTime()) / 86400000);
                 const label =
                   diff === 0

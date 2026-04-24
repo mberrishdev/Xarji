@@ -4,7 +4,7 @@ import { useTheme, useViewport } from "../ink/theme";
 import { Card, CardLabel, CardTitle, LinkBtn, PageHeader } from "../ink/primitives";
 import { AreaChart, Donut, HBar } from "../ink/charts";
 import { TxRow, type InkTx } from "../ink/TxRow";
-import { usePayments } from "../hooks/useTransactions";
+import { useConvertedPayments } from "../hooks/useTransactions";
 import { useMonthlyTrend } from "../hooks/useMonthlyTrend";
 import { DEFAULT_CATEGORIES, categorizeId, getCategory, type InkCategory } from "../lib/utils";
 import { formatCompact, monthKey } from "../ink/format";
@@ -25,23 +25,24 @@ export function Categories() {
   const monthStart = startOfMonth(now);
   const monthEnd = endOfMonth(now);
 
-  const { payments } = usePayments();
+  const { payments } = useConvertedPayments();
   const trend = useMonthlyTrend(6);
   const [range, setRange] = useState("Month");
 
   const inMonth = (ts: number) => isWithinInterval(new Date(ts), { start: monthStart, end: monthEnd });
 
   const monthPayments = useMemo(
-    () => payments.filter((p) => inMonth(p.transactionDate) && p.currency === "GEL"),
+    () => payments.filter((p) => inMonth(p.transactionDate)),
     [payments]
   );
 
   const cats: CatAgg[] = useMemo(() => {
     const map: Record<string, CatAgg> = {};
     for (const p of monthPayments) {
+      if (p.gelAmount === null) continue;
       const cat = getCategory(p.merchant, p.rawMessage);
       if (!map[cat.id]) map[cat.id] = { cat: cat.id, total: 0, count: 0, meta: cat };
-      map[cat.id].total += p.amount;
+      map[cat.id].total += p.gelAmount;
       map[cat.id].count += 1;
     }
     return Object.values(map).sort((a, b) => b.total - a.total);
@@ -61,12 +62,12 @@ export function Categories() {
       perCat[c.id] = keys.map((k) => ({ key: k, value: 0 }));
     }
     for (const p of payments) {
-      if (p.currency !== "GEL") continue;
+      if (p.gelAmount === null) continue;
       const k = monthKey(p.transactionDate);
       const idx = keys.indexOf(k);
       if (idx === -1) continue;
       const catId = categorizeId(p.merchant, p.rawMessage);
-      if (perCat[catId]) perCat[catId][idx].value += p.amount;
+      if (perCat[catId]) perCat[catId][idx].value += p.gelAmount;
     }
     return { keys, perCat, labels: trend.map((m) => m.label.slice(0, 3)) };
   }, [payments, trend]);
@@ -74,11 +75,12 @@ export function Categories() {
   const selMerchants = useMemo(() => {
     const map: Record<string, { merchant: string; total: number; count: number }> = {};
     for (const p of monthPayments) {
+      if (p.gelAmount === null) continue;
       const cid = categorizeId(p.merchant, p.rawMessage);
       if (cid !== selectedId) continue;
       const m = p.merchant || "Unknown";
       if (!map[m]) map[m] = { merchant: m, total: 0, count: 0 };
-      map[m].total += p.amount;
+      map[m].total += p.gelAmount;
       map[m].count += 1;
     }
     return Object.values(map).sort((a, b) => b.total - a.total);
