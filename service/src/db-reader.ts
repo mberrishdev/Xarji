@@ -222,7 +222,7 @@ export class MessagesDbReader {
       JOIN handle h ON m.handle_id = h.ROWID
       WHERE h.id = ?
         AND m.ROWID > ?
-      ORDER BY m.date ASC
+      ORDER BY m.ROWID ASC
       LIMIT ?
     `;
 

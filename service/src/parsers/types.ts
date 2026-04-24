@@ -10,6 +10,7 @@ import type { RawMessage } from "../db-reader";
 export type TransactionKind =
   | "payment"            // outgoing card purchase
   | "payment_failed"     // declined card purchase
+  | "reversal"           // card payment reversed / refunded back to account
   | "atm_withdrawal"     // outgoing cash from ATM
   | "transfer_out"       // outgoing transfer to another account
   | "transfer_in"        // incoming transfer (Phase 2)
@@ -62,6 +63,6 @@ export interface BankParser {
 }
 
 export function directionOf(kind: TransactionKind): TransactionDirection {
-  if (kind === "transfer_in" || kind === "deposit") return "in";
+  if (kind === "transfer_in" || kind === "deposit" || kind === "reversal") return "in";
   return "out";
 }
