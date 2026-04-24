@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useTheme, useViewport } from "../ink/theme";
 import { Card, CardLabel, CardTitle, Pill, PageHeader } from "../ink/primitives";
 import { TxRow, type InkTx } from "../ink/TxRow";
-import { useCredits, useMonthCredits } from "../hooks/useCredits";
+import { useConvertedCredits, useMonthCredits } from "../hooks/useCredits";
 import { useBankSenders } from "../hooks/useBankSenders";
 import { AreaChart } from "../ink/charts";
 import { currencySymbol, monthKey, monthLabel, formatLocalDay, parseLocalDay } from "../ink/format";
@@ -13,7 +13,7 @@ export function Income() {
   const vp = useViewport();
   const now = new Date();
   const my = { month: now.getMonth(), year: now.getFullYear() };
-  const { credits } = useCredits();
+  const { credits } = useConvertedCredits();
   const monthly = useMonthCredits(my);
   const { senders } = useBankSenders();
 
@@ -34,10 +34,10 @@ export function Income() {
     }
     const totals: Record<string, number> = {};
     for (const c of credits) {
-      if (c.currency !== "GEL") continue;
+      if (c.gelAmount === null) continue;
       const k = monthKey(c.transactionDate);
       if (!keys.includes(k)) continue;
-      totals[k] = (totals[k] || 0) + c.amount;
+      totals[k] = (totals[k] || 0) + c.gelAmount;
     }
     return keys.map((k) => ({ label: monthLabel(k).slice(0, 3), value: totals[k] || 0 }));
   }, [credits, now]);
@@ -98,11 +98,11 @@ export function Income() {
   const topSources = useMemo(() => {
     const map: Record<string, { name: string; total: number; count: number }> = {};
     for (const c of credits) {
-      if (c.currency !== "GEL") continue;
+      if (c.gelAmount === null) continue;
       if (!isWithinInterval(new Date(c.transactionDate), { start: monthStart, end: monthEnd })) continue;
       const name = c.counterparty || "—";
       if (!map[name]) map[name] = { name, total: 0, count: 0 };
-      map[name].total += c.amount;
+      map[name].total += c.gelAmount;
       map[name].count += 1;
     }
     return Object.values(map)
@@ -306,9 +306,13 @@ export function Income() {
               dayKeys.map((key) => {
                 const items = groups[key];
                 const d = parseLocalDay(key);
-                const dayTotal = items
-                  .filter((t) => t.currency === "GEL")
-                  .reduce((s, t) => s + (t.amount || 0), 0);
+                // Day totals are GEL-equivalent — same NBG-converted basis
+                // as the hero card so the totals reconcile. Day-list rows
+                // continue to render in their original currency below.
+                const dayTotal = items.reduce((s, t) => {
+                  const c = credits.find((cc) => cc.id === t.id);
+                  return s + (c?.gelAmount ?? 0);
+                }, 0);
                 const diff = Math.floor((today.getTime() - d.getTime()) / 86400000);
                 const label =
                   diff === 0

@@ -3,7 +3,7 @@ import { useTheme, useViewport } from "../ink/theme";
 import { Card, CardLabel, CardTitle, Pill, LiveDot, LinkBtn, PageHeader } from "../ink/primitives";
 import { AreaChart, Donut, Sparkline } from "../ink/charts";
 import { TxRow, type InkTx } from "../ink/TxRow";
-import { usePayments, useFailedPayments } from "../hooks/useTransactions";
+import { useConvertedPayments, useFailedPayments } from "../hooks/useTransactions";
 import { useMonthStats, useMonthSpendingByDay, useMonthTopMerchants } from "../hooks/useMonthlyAnalytics";
 import { useMonthlyTrend } from "../hooks/useMonthlyTrend";
 import { useCredits, useMonthCredits } from "../hooks/useCredits";
@@ -21,7 +21,7 @@ export function Dashboard() {
   const daily = useMonthSpendingByDay(my);
   const topMerchants = useMonthTopMerchants(my, 5);
   const trend = useMonthlyTrend(9);
-  const { payments } = usePayments();
+  const { payments } = useConvertedPayments();
   const { failedPayments } = useFailedPayments();
   const { credits } = useCredits();
   const monthCredits = useMonthCredits(my);
@@ -39,11 +39,11 @@ export function Dashboard() {
     const monthEnd = endOfMonth(now);
     const map: Record<string, { total: number; count: number; meta: typeof DEFAULT_CATEGORIES[number] }> = {};
     for (const p of payments) {
-      if (p.currency !== "GEL") continue;
+      if (p.gelAmount === null) continue;
       if (!isWithinInterval(new Date(p.transactionDate), { start: monthStart, end: monthEnd })) continue;
       const cat = getCategory(p.merchant, p.rawMessage);
       if (!map[cat.id]) map[cat.id] = { total: 0, count: 0, meta: cat };
-      map[cat.id].total += p.amount;
+      map[cat.id].total += p.gelAmount;
       map[cat.id].count += 1;
     }
     return Object.values(map).sort((a, b) => b.total - a.total);
