@@ -83,9 +83,20 @@ export function AssistantChat({ config, onClear }: { config: AIConfig; onClear: 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeThread?.id, activeThread?.autoRun]);
 
+  // Autoscroll-pinning rule: stick to the bottom only when the user is
+  // already near it. The earlier `[messages?.length, busy]` deps missed
+  // streaming token updates (length stayed the same as deltas appended);
+  // switching to `[messages, busy]` fixed that but yanked the user back
+  // every time they tried to scroll up to read prior context. This
+  // version reads the current scroll position before deciding, so the
+  // user can scroll up freely during a streaming response and only the
+  // already-pinned-to-bottom case follows the latest token.
+  const isAtBottomRef = useRef(true);
   useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [activeThread?.messages?.length, busy]);
+    const node = scrollRef.current;
+    if (!node) return;
+    if (isAtBottomRef.current) node.scrollTop = node.scrollHeight;
+  }, [activeThread?.messages, busy]);
 
   const switchTo = (id: string) => {
     setActiveThreadId(id);
@@ -232,7 +243,8 @@ export function AssistantChat({ config, onClear }: { config: AIConfig; onClear: 
         gridTemplateColumns: "260px 1fr",
         gap: 0,
         flex: 1,
-        minHeight: 720,
+        height: "100%",
+        minHeight: 0,
         background: T.panel,
         borderRadius: T.rXl,
         border: `1px solid ${T.line}`,
@@ -404,7 +416,7 @@ export function AssistantChat({ config, onClear }: { config: AIConfig; onClear: 
         </div>
       </aside>
 
-      <section style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
+      <section style={{ display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden" }}>
         <div
           style={{
             display: "flex",
@@ -602,6 +614,13 @@ export function AssistantChat({ config, onClear }: { config: AIConfig; onClear: 
         ) : (
           <div
             ref={scrollRef}
+            onScroll={(e) => {
+              const el = e.currentTarget;
+              // Within 60px of the bottom counts as "pinned" so a tiny
+              // overshoot from a streaming token doesn't unstick it.
+              const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+              isAtBottomRef.current = distanceFromBottom < 60;
+            }}
             style={{
               flex: 1,
               overflowY: "auto",
@@ -637,6 +656,17 @@ export function AssistantChat({ config, onClear }: { config: AIConfig; onClear: 
             <input
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "ArrowUp" && !e.shiftKey) {
+                  const userMessages = (activeThread?.messages ?? []).filter((m) => m.role === "user");
+                  if (userMessages.length === 0) return;
+                  const lastBlock = userMessages[userMessages.length - 1].blocks[0];
+                  if (lastBlock?.kind === "text") {
+                    e.preventDefault();
+                    setInput(lastBlock.text);
+                  }
+                }
+              }}
               placeholder={busy ? "Thinking…" : "Ask anything — set a budget, plan savings, find unused subscriptions…"}
               disabled={busy}
               style={{
@@ -877,38 +907,48 @@ function Message({ message, T }: { message: AIMessage; T: InkTheme }) {
   );
 }
 
+function renderInline(line: string, T: InkTheme) {
+  return line.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).map((p, i) => {
+    if (p.startsWith("**"))
+      return (
+        <strong key={i} style={{ fontWeight: 700, color: T.text }}>
+          {p.slice(2, -2)}
+        </strong>
+      );
+    if (p.startsWith("`"))
+      return (
+        <code
+          key={i}
+          style={{
+            fontFamily: T.mono,
+            fontSize: 12.5,
+            padding: "2px 5px",
+            background: T.panelAlt,
+            borderRadius: 4,
+            color: T.muted,
+          }}
+        >
+          {p.slice(1, -1)}
+        </code>
+      );
+    return <span key={i}>{p}</span>;
+  });
+}
+
 function Block({ block, T }: { block: AIBlock; T: InkTheme }) {
   if (block.kind === "text") {
-    const parts = block.text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
+    const lines = block.text.split("\n");
     return (
       <div
         style={{ fontSize: 14, lineHeight: 1.6, color: T.text, fontFamily: T.sans, maxWidth: 720 }}
       >
-        {parts.map((p, i) => {
-          if (p.startsWith("**"))
-            return (
-              <strong key={i} style={{ fontWeight: 700, color: T.text }}>
-                {p.slice(2, -2)}
-              </strong>
-            );
-          if (p.startsWith("`"))
-            return (
-              <code
-                key={i}
-                style={{
-                  fontFamily: T.mono,
-                  fontSize: 12.5,
-                  padding: "2px 6px",
-                  background: T.panelAlt,
-                  borderRadius: 5,
-                  color: T.accent,
-                }}
-              >
-                {p.slice(1, -1)}
-              </code>
-            );
-          return <span key={i}>{p}</span>;
-        })}
+        {lines.map((line, i) =>
+          line.trim() === "" ? (
+            <div key={i} style={{ height: "0.6em" }} />
+          ) : (
+            <div key={i}>{renderInline(line, T)}</div>
+          )
+        )}
       </div>
     );
   }

@@ -103,7 +103,8 @@ function ConfiguredShell() {
       <div
         style={{
           display: "flex",
-          minHeight: "100vh",
+          height: "100vh",
+          overflow: "hidden",
         }}
       >
         <Sidebar
@@ -118,6 +119,7 @@ function ConfiguredShell() {
             minWidth: 0,
             display: "flex",
             flexDirection: "column",
+            overflow: "auto",
           }}
         >
           <Outlet />
