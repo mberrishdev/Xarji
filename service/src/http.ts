@@ -29,6 +29,9 @@ import {
   NbgRequestFailedError,
   type NbgLanguage,
 } from "./exchange-rate/nbg-client";
+import { patchConfig, CONFIG_PATH } from "./config";
+import { getProvider, serialiseEvent } from "./ai";
+import type { AIProviderId, AIStreamRequest } from "./ai/types";
 
 export interface HttpServerOptions {
   port: number;
@@ -371,6 +374,123 @@ export function startHttpServer(opts: HttpServerOptions): HttpServerHandle {
           return json({ ok: false, error: String(err), errorKind: "internal" }, { status: 500 });
         }
       }
+      if (path === "/api/ai/keys" && req.method === "GET") {
+        // Boolean presence only — never echo the key value back.
+        const keys = opts.config.aiProviderKeys ?? {};
+        return json({
+          anthropic: !!keys.anthropic,
+          openai: !!keys.openai,
+        });
+      }
+
+      if (path === "/api/ai/keys" && req.method === "POST") {
+        let body: { provider?: unknown; apiKey?: unknown };
+        try {
+          body = (await req.json()) as { provider?: unknown; apiKey?: unknown };
+        } catch {
+          return json({ error: "Body must be valid JSON" }, { status: 400 });
+        }
+        const provider = body.provider;
+        const apiKey = body.apiKey;
+        if (provider !== "anthropic" && provider !== "openai") {
+          return json({ error: "`provider` must be 'anthropic' or 'openai'" }, { status: 400 });
+        }
+        if (typeof apiKey !== "string" || apiKey.trim().length < 20) {
+          return json({ error: "`apiKey` must be a non-empty string" }, { status: 400 });
+        }
+        const next = await patchConfig({
+          aiProviderKeys: { [provider]: apiKey.trim() },
+        });
+        opts.config = next;
+        return json({ ok: true });
+      }
+
+      if (path.startsWith("/api/ai/keys/") && req.method === "DELETE") {
+        const segments = path.split("/");
+        const provider = segments[segments.length - 1];
+        if (provider !== "anthropic" && provider !== "openai") {
+          return json({ error: "Unknown provider" }, { status: 400 });
+        }
+        // patchConfig deep-merges so it can't express "remove this key";
+        // do a direct read-prune-write instead.
+        const cfg = loadConfig();
+        const next = { ...(cfg.aiProviderKeys ?? {}) };
+        delete next[provider as "anthropic" | "openai"];
+        const updated = { ...cfg, aiProviderKeys: next };
+        await Bun.write(CONFIG_PATH, JSON.stringify(updated, null, 2));
+        opts.config = updated;
+        return json({ ok: true });
+      }
+
+      if (path === "/api/ai/stream" && req.method === "POST") {
+        let body: AIStreamRequest;
+        try {
+          body = (await req.json()) as AIStreamRequest;
+        } catch {
+          return json({ error: "Body must be valid JSON" }, { status: 400 });
+        }
+        const providerId = body.provider as AIProviderId;
+        if (providerId !== "anthropic" && providerId !== "openai") {
+          return json({ error: "`provider` must be 'anthropic' or 'openai'" }, { status: 400 });
+        }
+        const apiKey = opts.config.aiProviderKeys?.[providerId];
+        if (!apiKey) {
+          return json(
+            { error: `No API key configured for ${providerId}. Set one via POST /api/ai/keys.` },
+            { status: 412 }
+          );
+        }
+        if (!body.model || typeof body.model !== "string") {
+          return json({ error: "`model` is required" }, { status: 400 });
+        }
+        if (!Array.isArray(body.messages) || body.messages.length === 0) {
+          return json({ error: "`messages` must be a non-empty array" }, { status: 400 });
+        }
+
+        const provider = getProvider(providerId);
+        const upstreamAbort = new AbortController();
+        // If the dashboard disconnects mid-stream, propagate to the
+        // upstream provider so we don't keep paying for tokens nobody
+        // will ever read.
+        req.signal.addEventListener("abort", () => upstreamAbort.abort());
+
+        const sse = new ReadableStream<Uint8Array>({
+          async start(controller) {
+            const encoder = new TextEncoder();
+            try {
+              for await (const event of provider.stream({
+                apiKey,
+                model: body.model,
+                systemPrompt: body.systemPrompt ?? "",
+                messages: body.messages,
+                tools: body.tools ?? [],
+                signal: upstreamAbort.signal,
+              })) {
+                controller.enqueue(encoder.encode(serialiseEvent(event)));
+              }
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              controller.enqueue(
+                encoder.encode(serialiseEvent({ kind: "error", error: message }))
+              );
+            } finally {
+              controller.close();
+            }
+          },
+          cancel() {
+            upstreamAbort.abort();
+          },
+        });
+
+        return new Response(sse, {
+          headers: {
+            "content-type": "text/event-stream; charset=utf-8",
+            "cache-control": "no-store",
+            "x-accel-buffering": "no",
+          },
+        });
+      }
+
       if (path.startsWith("/api/")) {
         return json({ error: "unknown endpoint" }, { status: 404 });
       }

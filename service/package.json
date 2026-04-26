@@ -17,9 +17,11 @@
     "build:binary": "bun run build:embed && bun build --compile --target=bun-darwin-arm64 src/index.ts --outfile dist/xarji"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.91.1",
     "@instantdb/admin": "latest",
     "boxen": "^8.0.1",
-    "chalk": "^5.6.2"
+    "chalk": "^5.6.2",
+    "openai": "^6.34.0"
   },
   "devDependencies": {
     "@types/bun": "latest",
