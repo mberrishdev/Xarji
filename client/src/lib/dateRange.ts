@@ -71,8 +71,14 @@ export function rangeFromKey(key: RangeKey, now: Date, custom?: CustomRange): Da
     }
     case "Custom": {
       if (custom?.start && custom?.end) {
-        const start = startOfDay(new Date(custom.start));
-        const end = endOfDay(new Date(custom.end));
+        // <input type="date"> emits YYYY-MM-DD which `new Date(...)`
+        // parses as UTC midnight. In timezones west of UTC that lands
+        // on the previous calendar day, so a user-picked boundary
+        // would silently exclude the intended last day. Parse the
+        // components manually so the bounds line up with the user's
+        // local calendar regardless of timezone.
+        const start = startOfDay(parseLocalIsoDate(custom.start));
+        const end = endOfDay(parseLocalIsoDate(custom.end));
         return { start, end, label: `${format(start, "MMM d")} – ${format(end, "MMM d, yyyy")}`, key };
       }
       // Fallback while the user hasn't set explicit dates yet.
@@ -81,6 +87,15 @@ export function rangeFromKey(key: RangeKey, now: Date, custom?: CustomRange): Da
       return { start, end, label: "Last 30 days", key };
     }
   }
+}
+
+/** Parses a YYYY-MM-DD string as a local-time date. `new Date(string)`
+ *  treats it as UTC; we want the bounds to follow the user's wall
+ *  clock so date-range filters match what they typed. */
+function parseLocalIsoDate(value: string): Date {
+  const [y, m, d] = value.split("-").map(Number);
+  if (!y || !m || !d) return new Date(NaN);
+  return new Date(y, m - 1, d);
 }
 
 export function isInRange(ts: number, range: DateRange): boolean {

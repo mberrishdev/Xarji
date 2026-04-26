@@ -63,6 +63,10 @@ export function Income() {
 
   const filtered = useMemo(() => {
     return allTx.filter((t) => {
+      // Apply the active range first so the ledger reconciles with the
+      // hero totals; previously the summary cards switched on range
+      // but the list kept showing all-time credits.
+      if (!isInRange(t.transactionDate, range)) return false;
       if (bank !== "all" && t.bankSenderId !== bank) return false;
       if (search) {
         const q = search.toLowerCase();
@@ -72,7 +76,7 @@ export function Income() {
       }
       return true;
     });
-  }, [allTx, bank, search]);
+  }, [allTx, bank, search, range]);
 
   const groups = useMemo(() => {
     const g: Record<string, InkTx[]> = {};
