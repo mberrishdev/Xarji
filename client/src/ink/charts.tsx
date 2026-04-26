@@ -72,23 +72,42 @@ export function AreaChart({
     return "";
   };
 
-  const handleClick = onBucketClick
-    ? (state: unknown) => {
-        const s = state as
-          | { activeTooltipIndex?: number | string | null; activePayload?: Array<{ payload?: AreaDatum }> }
-          | null;
-        if (!s) return;
-        const idx = typeof s.activeTooltipIndex === "number" ? s.activeTooltipIndex : Number(s.activeTooltipIndex);
-        if (!Number.isFinite(idx)) return;
-        const datum = s.activePayload?.[0]?.payload;
+  // Recharts v3.6 + React 19 doesn't reliably fire chart-level `onClick` —
+  // the wrapper div receives the DOM click but the React handler never
+  // runs through. Wrap the chart in our own div and compute the bucket
+  // index from the click x-coordinate against the visible data area.
+  const containerRef = React.useRef<HTMLDivElement | null>(null);
+  const handleClickFromContainer = onBucketClick
+    ? (e: React.MouseEvent<HTMLDivElement>) => {
+        const node = containerRef.current;
+        if (!node || data.length === 0) return;
+        const rect = node.getBoundingClientRect();
+        const innerLeft = rect.left + chartMargin.left;
+        const innerRight = rect.right - chartMargin.right;
+        const innerWidth = innerRight - innerLeft;
+        if (innerWidth <= 0) return;
+        const x = e.clientX;
+        // Recharts plots category points evenly across the inner width:
+        // index i sits at innerLeft + (innerWidth * i / (n-1)) for n>1.
+        // Snap the click x to the nearest bucket so a click between two
+        // points always lands on the closer one.
+        const ratio = (x - innerLeft) / innerWidth;
+        const clamped = Math.max(0, Math.min(1, ratio));
+        const lastIdx = data.length - 1;
+        const idx = lastIdx <= 0 ? 0 : Math.round(clamped * lastIdx);
+        const datum = data[idx];
         if (datum) onBucketClick(datum, idx);
       }
     : undefined;
 
   return (
-    <div style={{ width, height, maxWidth: "100%", cursor: onBucketClick ? "pointer" : undefined }}>
+    <div
+      ref={containerRef}
+      onClick={handleClickFromContainer}
+      style={{ width, height, maxWidth: "100%", cursor: onBucketClick ? "pointer" : undefined }}
+    >
       <ResponsiveContainer width="100%" height="100%">
-        <RAreaChart data={data} margin={chartMargin} onClick={handleClick}>
+        <RAreaChart data={data} margin={chartMargin}>
           {fill && (
             <defs>
               <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
@@ -274,15 +293,51 @@ export function Donut({
   const total = data.reduce((s, d) => s + d.value, 0) || 1;
 
   const clickable = hasData && !!onSegmentClick;
-  const handleSliceClick = clickable
-    ? (_: unknown, index: number) => {
-        const seg = segments[index];
-        if (seg) onSegmentClick!(seg, index);
+  // Recharts v3.6 + React 19 doesn't reliably fire `<Pie onClick>` per cell.
+  // Catch the click on the donut's outer wrapper and resolve it ourselves
+  // by mapping the click position to an angular sweep of the ring.
+  const donutRef = React.useRef<HTMLDivElement | null>(null);
+  const handleDonutClick = clickable
+    ? (e: React.MouseEvent<HTMLDivElement>) => {
+        const node = donutRef.current;
+        if (!node) return;
+        const rect = node.getBoundingClientRect();
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height / 2;
+        const dx = e.clientX - cx;
+        const dy = e.clientY - cy;
+        const radius = Math.hypot(dx, dy);
+        // Clicks inside the inner hole or beyond the outer ring don't
+        // belong to a segment — leave the donut as a pure data widget.
+        if (radius < inner || radius > outer + 6) return;
+        // Donut renders clockwise from 12 o'clock (startAngle=90, endAngle=-270
+        // in Recharts' coord system). Compute the angular fraction of the
+        // click around that same axis: 0 = top, 0.25 = right, 0.5 = bottom,
+        // 0.75 = left.
+        const angleFromTopClockwise = (Math.atan2(dx, -dy) + Math.PI * 2) % (Math.PI * 2);
+        const fraction = angleFromTopClockwise / (Math.PI * 2);
+        // Walk segments accumulating their fractional value until we pass
+        // the click's angular position.
+        let acc = 0;
+        for (let i = 0; i < segments.length; i++) {
+          const seg = segments[i];
+          const segFrac = seg.value / total;
+          if (segFrac <= 0) continue;
+          if (fraction <= acc + segFrac) {
+            onSegmentClick!(seg, i);
+            return;
+          }
+          acc += segFrac;
+        }
       }
     : undefined;
 
   return (
-    <div style={{ position: "relative", width: size, height: size, cursor: clickable ? "pointer" : undefined }}>
+    <div
+      ref={donutRef}
+      onClick={handleDonutClick}
+      style={{ position: "relative", width: size, height: size, cursor: clickable ? "pointer" : undefined }}
+    >
       <PieChart width={size} height={size}>
         <Pie
           data={hasData ? data : [{ name: "empty", value: 1, color: "transparent" }]}
@@ -296,7 +351,6 @@ export function Donut({
           endAngle={-270}
           stroke="none"
           isAnimationActive={false}
-          onClick={handleSliceClick}
         >
           {(hasData ? data : [{ color: "transparent" }]).map((d, i) => (
             <Cell key={i} fill={d.color} />
