@@ -119,6 +119,7 @@ and update them in the same commit.
 | [categories.md](categories.md) | `client/src/pages/Categories.tsx` — left donut + list, per-cat detail, per-cat trend, merchant rows | 2026-04-27 (PR #23) |
 | [merchants.md](merchants.md) | `client/src/pages/Merchants.tsx` — table, search, drill-down rows | 2026-04-27 (PR #23) |
 | [income.md](income.md) | `client/src/pages/Income.tsx` — hero, income trend, ledger | 2026-04-27 (PR #23) |
+| [manage.md](manage.md) | `client/src/pages/Settings.tsx` mounted at `/manage` — Sync now button, CSRF, partial-failure UI | 2026-04-27 (PR #22) |
 | [ranges.md](ranges.md) | Cross-cutting `useRangeState` + `dateRange.ts` invariants and Codex-fix regressions | 2026-04-27 (PR #23) |
 
 ## Test ID convention
