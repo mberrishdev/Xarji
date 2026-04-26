@@ -9,7 +9,7 @@ import { useMonthlyTrend } from "../hooks/useMonthlyTrend";
 import { DEFAULT_CATEGORIES, type InkCategory } from "../lib/utils";
 import { useCategorizer } from "../hooks/useCategorizer";
 import { useRangeState } from "../hooks/useRangeState";
-import { isInRange } from "../lib/dateRange";
+import { isInRange, rangeToDateParams } from "../lib/dateRange";
 import { formatCompact, formatLocalDay, monthKey } from "../ink/format";
 import { endOfMonth, format } from "date-fns";
 
@@ -299,6 +299,9 @@ export function Categories() {
                         const params = new URLSearchParams();
                         if (selectedId) params.set("category", selectedId);
                         params.set("merchant", m.merchant);
+                        const { dateFrom, dateTo } = rangeToDateParams(range);
+                        params.set("dateFrom", dateFrom);
+                        params.set("dateTo", dateTo);
                         navigate(`/transactions?${params.toString()}`);
                       }}
                       style={{
@@ -359,10 +362,13 @@ export function Categories() {
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
                 <CardTitle>Recent in {selCat?.name}</CardTitle>
                 <LinkBtn
-                  onClick={() =>
-                    selectedId &&
-                    navigate(`/transactions?category=${encodeURIComponent(selectedId)}`)
-                  }
+                  onClick={() => {
+                    if (!selectedId) return;
+                    const { dateFrom, dateTo } = rangeToDateParams(range);
+                    navigate(
+                      `/transactions?category=${encodeURIComponent(selectedId)}&dateFrom=${dateFrom}&dateTo=${dateTo}`
+                    );
+                  }}
                 >
                   All →
                 </LinkBtn>

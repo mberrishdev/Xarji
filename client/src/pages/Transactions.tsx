@@ -6,7 +6,7 @@ import { TxRow, type InkTx } from "../ink/TxRow";
 import { useConvertedPayments, useFailedPayments } from "../hooks/useTransactions";
 import { useBankSenders } from "../hooks/useBankSenders";
 import { useRangeState } from "../hooks/useRangeState";
-import { isInRange } from "../lib/dateRange";
+import { isInRange, isValidIsoDateRange } from "../lib/dateRange";
 import { DEFAULT_CATEGORIES } from "../lib/utils";
 import { useCategorizer } from "../hooks/useCategorizer";
 import { currencySymbol, formatLocalDay, parseLocalDay } from "../ink/format";
@@ -38,8 +38,8 @@ export function Transactions() {
   const initialCustom = (() => {
     const start = searchParams.get("dateFrom") || "";
     const end = searchParams.get("dateTo") || "";
-    if (!start || !end) return undefined;
-    return { start, end };
+    const candidate = { start, end };
+    return isValidIsoDateRange(candidate) ? candidate : undefined;
   })();
 
   const { range, props: rangeProps } = useRangeState("Month", { customInitial: initialCustom });

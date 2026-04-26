@@ -5,7 +5,7 @@ import { Card, PageHeader } from "../ink/primitives";
 import { useConvertedPayments } from "../hooks/useTransactions";
 import { useCategorizer } from "../hooks/useCategorizer";
 import { useRangeState } from "../hooks/useRangeState";
-import { isInRange } from "../lib/dateRange";
+import { isInRange, rangeToDateParams } from "../lib/dateRange";
 
 export function Merchants() {
   const T = useTheme();
@@ -129,7 +129,12 @@ export function Merchants() {
               return (
                 <button
                   key={m.merchant}
-                  onClick={() => navigate(`/transactions?merchant=${encodeURIComponent(m.merchant)}`)}
+                  onClick={() => {
+                    const { dateFrom, dateTo } = rangeToDateParams(range);
+                    navigate(
+                      `/transactions?merchant=${encodeURIComponent(m.merchant)}&dateFrom=${dateFrom}&dateTo=${dateTo}`
+                    );
+                  }}
                   style={{
                     display: "grid",
                     gridTemplateColumns: cols,

@@ -70,18 +70,21 @@ export function rangeFromKey(key: RangeKey, now: Date, custom?: CustomRange): Da
       return { start, end, label: format(start, "yyyy"), key };
     }
     case "Custom": {
-      if (custom?.start && custom?.end) {
+      if (isValidIsoDateRange(custom)) {
         // <input type="date"> emits YYYY-MM-DD which `new Date(...)`
         // parses as UTC midnight. In timezones west of UTC that lands
         // on the previous calendar day, so a user-picked boundary
         // would silently exclude the intended last day. Parse the
         // components manually so the bounds line up with the user's
         // local calendar regardless of timezone.
-        const start = startOfDay(parseLocalIsoDate(custom.start));
-        const end = endOfDay(parseLocalIsoDate(custom.end));
+        const start = startOfDay(parseLocalIsoDate(custom!.start));
+        const end = endOfDay(parseLocalIsoDate(custom!.end));
         return { start, end, label: `${format(start, "MMM d")} – ${format(end, "MMM d, yyyy")}`, key };
       }
-      // Fallback while the user hasn't set explicit dates yet.
+      // Fallback while the user hasn't set explicit dates yet, or when
+      // a deep-link / stale bookmark passed malformed values that
+      // would otherwise resolve to NaN bounds (every transaction
+      // filtered out, page looks empty with no error).
       const start = startOfDay(subDays(now, 29));
       const end = endOfDay(now);
       return { start, end, label: "Last 30 days", key };
@@ -96,6 +99,31 @@ function parseLocalIsoDate(value: string): Date {
   const [y, m, d] = value.split("-").map(Number);
   if (!y || !m || !d) return new Date(NaN);
   return new Date(y, m - 1, d);
+}
+
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** True when both bounds are syntactically valid YYYY-MM-DD, parse to
+ *  real local-time dates, and start ≤ end. Used to gate the Custom
+ *  branch so a malformed deep-link or stale bookmark falls back to
+ *  the "Last 30 days" default instead of silently emptying the page. */
+export function isValidIsoDateRange(custom: CustomRange | undefined | null): boolean {
+  if (!custom?.start || !custom?.end) return false;
+  if (!ISO_DATE_RE.test(custom.start) || !ISO_DATE_RE.test(custom.end)) return false;
+  const start = parseLocalIsoDate(custom.start);
+  const end = parseLocalIsoDate(custom.end);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return false;
+  return start.getTime() <= end.getTime();
+}
+
+/** Returns a {dateFrom, dateTo} pair suitable for passing to a drill-down
+ *  link so the destination Transactions page lands on the same window the
+ *  source page was viewing. Always emits both keys so callers can spread
+ *  the result into a URLSearchParams build directly. */
+export function rangeToDateParams(range: DateRange): { dateFrom: string; dateTo: string } {
+  const fmt = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return { dateFrom: fmt(range.start), dateTo: fmt(range.end) };
 }
 
 export function isInRange(ts: number, range: DateRange): boolean {

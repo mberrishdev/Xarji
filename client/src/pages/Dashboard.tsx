@@ -9,7 +9,7 @@ import { useRangeStats, useRangeTopMerchants } from "../hooks/useMonthlyAnalytic
 import { useMonthlyTrend } from "../hooks/useMonthlyTrend";
 import { useCredits, useRangeCredits } from "../hooks/useCredits";
 import { useRangeState } from "../hooks/useRangeState";
-import { previousRange } from "../lib/dateRange";
+import { previousRange, rangeToDateParams } from "../lib/dateRange";
 import { formatCompact, formatLocalDay } from "../ink/format";
 import { DEFAULT_CATEGORIES } from "../lib/utils";
 import { useCategorizer } from "../hooks/useCategorizer";
@@ -331,7 +331,11 @@ export function Dashboard() {
                 labelFont={T.sans}
                 onSegmentClick={(_seg, i) => {
                   const cat = topCats[i];
-                  if (cat) navigate(`/transactions?category=${encodeURIComponent(cat.meta.id)}`);
+                  if (!cat) return;
+                  const { dateFrom, dateTo } = rangeToDateParams(range);
+                  navigate(
+                    `/transactions?category=${encodeURIComponent(cat.meta.id)}&dateFrom=${dateFrom}&dateTo=${dateTo}`
+                  );
                 }}
               />
               <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 10, marginTop: 22 }}>
@@ -398,7 +402,12 @@ export function Dashboard() {
               return (
                 <button
                   key={m.name}
-                  onClick={() => navigate(`/transactions?merchant=${encodeURIComponent(m.name)}`)}
+                  onClick={() => {
+                    const { dateFrom, dateTo } = rangeToDateParams(range);
+                    navigate(
+                      `/transactions?merchant=${encodeURIComponent(m.name)}&dateFrom=${dateFrom}&dateTo=${dateTo}`
+                    );
+                  }}
                   style={{
                     padding: "14px 14px",
                     background: T.panelAlt,
