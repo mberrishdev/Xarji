@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTheme, useViewport } from "../ink/theme";
 import { Card, CardLabel, CardTitle, LinkBtn, PageHeader } from "../ink/primitives";
@@ -8,8 +8,10 @@ import { useConvertedPayments } from "../hooks/useTransactions";
 import { useMonthlyTrend } from "../hooks/useMonthlyTrend";
 import { DEFAULT_CATEGORIES, type InkCategory } from "../lib/utils";
 import { useCategorizer } from "../hooks/useCategorizer";
-import { formatCompact, monthKey } from "../ink/format";
-import { isWithinInterval, startOfMonth, endOfMonth, format } from "date-fns";
+import { useRangeState } from "../hooks/useRangeState";
+import { isInRange, rangeToDateParams } from "../lib/dateRange";
+import { formatCompact, formatLocalDay, monthKey } from "../ink/format";
+import { endOfMonth, format } from "date-fns";
 
 interface CatAgg {
   cat: string;
@@ -23,19 +25,15 @@ export function Categories() {
   const vp = useViewport();
   const navigate = useNavigate();
   const now = new Date();
-  const monthStart = startOfMonth(now);
-  const monthEnd = endOfMonth(now);
 
   const { payments } = useConvertedPayments();
   const { getCategory, categorize: categorizeId } = useCategorizer();
   const trend = useMonthlyTrend(6);
-  const [range, setRange] = useState("Month");
-
-  const inMonth = (ts: number) => isWithinInterval(new Date(ts), { start: monthStart, end: monthEnd });
+  const { range, props: rangeProps } = useRangeState("Month");
 
   const monthPayments = useMemo(
-    () => payments.filter((p) => inMonth(p.transactionDate)),
-    [payments]
+    () => payments.filter((p) => isInRange(p.transactionDate, range)),
+    [payments, range]
   );
 
   const cats: CatAgg[] = useMemo(() => {
@@ -48,10 +46,19 @@ export function Categories() {
       map[cat.id].count += 1;
     }
     return Object.values(map).sort((a, b) => b.total - a.total);
-  }, [monthPayments]);
+  }, [monthPayments, getCategory]);
 
   const total = cats.reduce((s, c) => s + c.total, 0);
   const [selected, setSelected] = useState<string | null>(null);
+
+  // Drop a stale selection when the active range no longer contains it,
+  // so the right-hand pane never keeps rendering an empty category that
+  // isn't even shown in the left list anymore.
+  useEffect(() => {
+    if (selected && !cats.some((c) => c.cat === selected)) {
+      setSelected(null);
+    }
+  }, [cats, selected]);
 
   const selectedId = selected || cats[0]?.cat;
   const selCat = DEFAULT_CATEGORIES.find((c) => c.id === selectedId);
@@ -112,7 +119,7 @@ export function Categories() {
   if (cats.length === 0) {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: T.density.gap }}>
-        <PageHeader eyebrow={eyebrow} title="Categories" active={range} onRange={setRange} />
+        <PageHeader eyebrow={eyebrow} title="Categories" {...rangeProps} />
         <Card>
           <div style={{ color: T.muted, fontSize: 13, padding: "40px 0", textAlign: "center", fontFamily: T.sans }}>
             No transactions in {format(now, "MMMM")} yet.
@@ -124,7 +131,7 @@ export function Categories() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: T.density.gap, height: "100%" }}>
-      <PageHeader eyebrow={eyebrow} title="Categories" active={range} onRange={setRange} />
+      <PageHeader eyebrow={eyebrow} title="Categories" {...rangeProps} />
 
       <div
         style={{
@@ -138,7 +145,7 @@ export function Categories() {
         <Card pad="24px 24px" style={{ display: "flex", flexDirection: "column" }}>
           <div style={{ display: "flex", justifyContent: "center", marginBottom: 16 }}>
             <Donut
-              segments={cats.map((c) => ({ value: c.total, color: c.meta.color }))}
+              segments={cats.map((c) => ({ value: c.total, color: c.meta.color, name: c.meta.name }))}
               size={220}
               thickness={30}
               gap={4}
@@ -245,6 +252,18 @@ export function Categories() {
                     showAxes={false}
                     cornerRadius={10}
                     padding={{ top: 8, right: 4, bottom: 22, left: 4 }}
+                    onBucketClick={(_d, i) => {
+                      const key = catTrend.keys[i];
+                      if (!key || !selectedId) return;
+                      const [y, m] = key.split("-").map(Number);
+                      const start = new Date(y, m - 1, 1);
+                      const end = endOfMonth(start);
+                      navigate(
+                        `/transactions?category=${encodeURIComponent(selectedId)}&dateFrom=${formatLocalDay(
+                          start.getTime()
+                        )}&dateTo=${formatLocalDay(end.getTime())}`
+                      );
+                    }}
                   />
                   <div
                     style={{
@@ -283,7 +302,32 @@ export function Categories() {
                 {selMerchants.slice(0, 10).map((m) => {
                   const maxT = selMerchants[0]?.total || 1;
                   return (
-                    <div key={m.merchant} style={{ padding: "10px 0", borderBottom: `1px solid ${T.line}` }}>
+                    <button
+                      key={m.merchant}
+                      onClick={() => {
+                        const params = new URLSearchParams();
+                        if (selectedId) params.set("category", selectedId);
+                        params.set("merchant", m.merchant);
+                        const { dateFrom, dateTo } = rangeToDateParams(range);
+                        params.set("dateFrom", dateFrom);
+                        params.set("dateTo", dateTo);
+                        navigate(`/transactions?${params.toString()}`);
+                      }}
+                      style={{
+                        display: "block",
+                        width: "100%",
+                        padding: "10px 0",
+                        borderTop: 0,
+                        borderLeft: 0,
+                        borderRight: 0,
+                        borderBottom: `1px solid ${T.line}`,
+                        background: "transparent",
+                        textAlign: "left",
+                        cursor: "pointer",
+                        color: "inherit",
+                        font: "inherit",
+                      }}
+                    >
                       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4, gap: 12, alignItems: "baseline" }}>
                         <span
                           style={{
@@ -317,7 +361,7 @@ export function Categories() {
                       <div style={{ fontSize: 10, color: T.dim, fontFamily: T.mono, marginTop: 4 }}>
                         ×{m.count} · avg ₾{Math.round(m.total / Math.max(1, m.count))}
                       </div>
-                    </div>
+                    </button>
                   );
                 })}
               </div>
@@ -327,10 +371,13 @@ export function Categories() {
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
                 <CardTitle>Recent in {selCat?.name}</CardTitle>
                 <LinkBtn
-                  onClick={() =>
-                    selectedId &&
-                    navigate(`/transactions?category=${encodeURIComponent(selectedId)}`)
-                  }
+                  onClick={() => {
+                    if (!selectedId) return;
+                    const { dateFrom, dateTo } = rangeToDateParams(range);
+                    navigate(
+                      `/transactions?category=${encodeURIComponent(selectedId)}&dateFrom=${dateFrom}&dateTo=${dateTo}`
+                    );
+                  }}
                 >
                   All →
                 </LinkBtn>

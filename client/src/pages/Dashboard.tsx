@@ -1,42 +1,42 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import { useTheme, useViewport, type InkTheme } from "../ink/theme";
 import { Card, CardLabel, CardTitle, Pill, LiveDot, LinkBtn, PageHeader } from "../ink/primitives";
 import { AreaChart, Donut } from "../ink/charts";
 import { TxRow, type InkTx } from "../ink/TxRow";
 import { useConvertedPayments, useFailedPayments } from "../hooks/useTransactions";
-import { useMonthStats, useMonthTopMerchants } from "../hooks/useMonthlyAnalytics";
+import { useRangeStats, useRangeTopMerchants } from "../hooks/useMonthlyAnalytics";
 import { useMonthlyTrend } from "../hooks/useMonthlyTrend";
-import { useCredits, useMonthCredits } from "../hooks/useCredits";
-import { formatCompact } from "../ink/format";
+import { useCredits, useRangeCredits } from "../hooks/useCredits";
+import { useRangeState } from "../hooks/useRangeState";
+import { previousRange, rangeToDateParams } from "../lib/dateRange";
+import { formatCompact, formatLocalDay } from "../ink/format";
 import { DEFAULT_CATEGORIES } from "../lib/utils";
 import { useCategorizer } from "../hooks/useCategorizer";
-import { isWithinInterval, startOfMonth, endOfMonth, subMonths, format } from "date-fns";
+import { isWithinInterval, endOfMonth, differenceInCalendarDays } from "date-fns";
 
 export function Dashboard() {
   const T = useTheme();
   const vp = useViewport();
+  const navigate = useNavigate();
   const now = new Date();
-  const my = { month: now.getMonth(), year: now.getFullYear() };
+  const { range, props: rangeProps } = useRangeState("Month");
+  const prevPeriod = useMemo(() => previousRange(range), [range]);
 
-  const prevDate = subMonths(now, 1);
-  const prevMy = { month: prevDate.getMonth(), year: prevDate.getFullYear() };
-
-  const stats = useMonthStats(my);
-  const topMerchants = useMonthTopMerchants(my, 5);
+  const stats = useRangeStats(range);
+  const topMerchants = useRangeTopMerchants(range, 5);
   const trend = useMonthlyTrend(9);
   const { payments } = useConvertedPayments();
   const { failedPayments } = useFailedPayments();
   const { credits } = useCredits();
-  const monthCredits = useMonthCredits(my);
-  const prevMonthCredits = useMonthCredits(prevMy);
+  const monthCredits = useRangeCredits(range);
+  const prevMonthCredits = useRangeCredits(prevPeriod);
   const { getCategory } = useCategorizer();
 
-  const [range, setRange] = useState("Month");
-
-  const prevMonthName = format(prevDate, "MMMM");
-  const prevMonthShort = format(prevDate, "MMM");
-  const monthYearLabel = format(now, "MMMM yyyy");
-  const monthShortName = format(now, "MMM").toUpperCase();
+  const prevMonthName = prevPeriod.label;
+  const prevMonthShort = prevPeriod.label.split(" ")[0]; // "Mar 2026" → "Mar", "Mar 1 – 31" → "Mar"
+  const monthYearLabel = range.label;
+  const monthShortName = range.label.split(" ")[0].toUpperCase();
   const income = monthCredits.total;
   const net = income - stats.total;
   const savingsRate = income > 0 ? (net / income) * 100 : 0;
@@ -50,21 +50,21 @@ export function Dashboard() {
     [trend]
   );
 
-  // Category breakdown for this month
+  // Category breakdown for the active range. Uses the same date-fns
+  // isWithinInterval the aggregator hooks use so the donut total
+  // always reconciles with stats.total.
   const byCategory = useMemo(() => {
-    const monthStart = startOfMonth(now);
-    const monthEnd = endOfMonth(now);
     const map: Record<string, { total: number; count: number; meta: typeof DEFAULT_CATEGORIES[number] }> = {};
     for (const p of payments) {
       if (p.gelAmount === null) continue;
-      if (!isWithinInterval(new Date(p.transactionDate), { start: monthStart, end: monthEnd })) continue;
+      if (!isWithinInterval(new Date(p.transactionDate), { start: range.start, end: range.end })) continue;
       const cat = getCategory(p.merchant, p.rawMessage);
       if (!map[cat.id]) map[cat.id] = { total: 0, count: 0, meta: cat };
       map[cat.id].total += p.gelAmount;
       map[cat.id].count += 1;
     }
     return Object.values(map).sort((a, b) => b.total - a.total);
-  }, [payments, getCategory]);
+  }, [payments, getCategory, range]);
 
   const topCats = byCategory.slice(0, 5);
   const totalCatSum = topCats.reduce((s, c) => s + c.total, 0) || 1;
@@ -119,10 +119,21 @@ export function Dashboard() {
   }, [payments, failedPayments, credits, getCategory]);
 
   const positive = stats.totalChange > 0;
-  const dayNum = now.getDate();
+  // Day count comes from the active range. For a Month-with-future-days the
+  // range still extends to month-end, but the user has only "lived" up to
+  // today, so cap the count at today when the range straddles `now` —
+  // showing "30 days · 9 transactions" on day 8 of April reads as if every
+  // day was empty when in fact most haven't happened yet.
+  const rangeDays = differenceInCalendarDays(range.end, range.start) + 1;
+  const elapsedInRange = now > range.end
+    ? rangeDays
+    : now < range.start
+    ? 0
+    : differenceInCalendarDays(now, range.start) + 1;
+  const dayNum = Math.max(1, Math.min(rangeDays, elapsedInRange));
   const hour = now.getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
-  const monthTitle = format(now, "MMMM, 'at a glance'");
+  const rangeTitle = `${range.label}, at a glance`;
 
   const monthShort = Math.round(stats.total).toLocaleString("en-US");
   const monthDecimals = stats.total.toFixed(2).split(".")[1];
@@ -132,9 +143,8 @@ export function Dashboard() {
     <div style={{ display: "flex", flexDirection: "column", gap: T.density.gap, height: "100%" }}>
       <PageHeader
         eyebrow={`${greeting}`}
-        title={monthTitle}
-        active={range}
-        onRange={setRange}
+        title={rangeTitle}
+        {...rangeProps}
       />
 
       <div
@@ -243,6 +253,16 @@ export function Dashboard() {
                 showAxes={false}
                 cornerRadius={14}
                 padding={{ top: 6, right: 2, bottom: 22, left: 2 }}
+                onBucketClick={(_d, i) => {
+                  const bucket = trend[i];
+                  if (!bucket) return;
+                  const [y, m] = bucket.key.split("-").map(Number);
+                  const start = new Date(y, m - 1, 1);
+                  const end = endOfMonth(start);
+                  navigate(
+                    `/transactions?dateFrom=${formatLocalDay(start.getTime())}&dateTo=${formatLocalDay(end.getTime())}`
+                  );
+                }}
               />
               <div
                 style={{
@@ -312,14 +332,22 @@ export function Dashboard() {
           ) : (
             <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 4 }}>
               <Donut
-                segments={topCats.map((c) => ({ value: c.total, color: c.meta.color }))}
+                segments={topCats.map((c) => ({ value: c.total, color: c.meta.color, name: c.meta.name }))}
                 size={200}
                 thickness={28}
                 gap={4}
-                centerLabel={format(now, "MMM").toUpperCase()}
+                centerLabel={monthShortName}
                 centerValue={"₾" + formatCompact(stats.total)}
                 centerColor={T.text}
                 labelFont={T.sans}
+                onSegmentClick={(_seg, i) => {
+                  const cat = topCats[i];
+                  if (!cat) return;
+                  const { dateFrom, dateTo } = rangeToDateParams(range);
+                  navigate(
+                    `/transactions?category=${encodeURIComponent(cat.meta.id)}&dateFrom=${dateFrom}&dateTo=${dateTo}`
+                  );
+                }}
               />
               <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 10, marginTop: 22 }}>
                 {topCats.map((c) => {
@@ -367,7 +395,7 @@ export function Dashboard() {
       {/* Top merchants */}
       <Card pad="20px 24px">
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
-          <CardTitle>Top merchants · {format(now, "MMMM")}</CardTitle>
+          <CardTitle>Top merchants · {range.label}</CardTitle>
           <LinkBtn>Explore →</LinkBtn>
         </div>
         {topMerchants.length === 0 ? (
@@ -383,13 +411,23 @@ export function Dashboard() {
             {topMerchants.map((m) => {
               const cat = getCategory(m.name);
               return (
-                <div
+                <button
                   key={m.name}
+                  onClick={() => {
+                    const { dateFrom, dateTo } = rangeToDateParams(range);
+                    navigate(
+                      `/transactions?merchant=${encodeURIComponent(m.name)}&dateFrom=${dateFrom}&dateTo=${dateTo}`
+                    );
+                  }}
                   style={{
                     padding: "14px 14px",
                     background: T.panelAlt,
                     borderRadius: T.rMd,
                     border: `1px solid ${T.line}`,
+                    textAlign: "left",
+                    cursor: "pointer",
+                    color: "inherit",
+                    font: "inherit",
                   }}
                 >
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
@@ -424,7 +462,7 @@ export function Dashboard() {
                     </div>
                     <div style={{ fontSize: 10, color: T.dim, fontFamily: T.mono }}>×{m.count}</div>
                   </div>
-                </div>
+                </button>
               );
             })}
           </div>

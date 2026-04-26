@@ -1,4 +1,17 @@
 import React from "react";
+import {
+  Area,
+  AreaChart as RAreaChart,
+  CartesianGrid,
+  Cell,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+import { useTheme } from "./theme";
 
 export interface AreaDatum {
   label: string;
@@ -18,8 +31,10 @@ export function AreaChart({
   axisColor = "rgba(0,0,0,0.4)",
   axisFont = "ui-monospace, monospace",
   formatY = (n: number) => n.toFixed(0),
+  formatTooltipValue,
   cornerRadius = 0,
   padding = { top: 18, right: 12, bottom: 22, left: 42 },
+  onBucketClick,
 }: {
   data: AreaDatum[];
   width?: number;
@@ -33,69 +48,211 @@ export function AreaChart({
   axisColor?: string;
   axisFont?: string;
   formatY?: (n: number) => string;
+  formatTooltipValue?: (n: number) => string;
   cornerRadius?: number;
   padding?: { top: number; right: number; bottom: number; left: number };
+  /** Fires when the user clicks a bucket point. Receives the datum and its
+   *  zero-based index, so the consumer can navigate to a date-filtered view. */
+  onBucketClick?: (datum: AreaDatum, index: number) => void;
 }) {
+  const gradientId = React.useId();
   const clipId = React.useId();
   if (!data || data.length === 0) return null;
-  const values = data.map((d) => d.value);
-  const max = Math.max(...values, 1) * 1.08;
-  const min = 0;
-  const innerW = width - padding.left - padding.right;
-  const innerH = height - padding.top - padding.bottom;
-  const x = (i: number) => padding.left + (i / Math.max(1, data.length - 1)) * innerW;
-  const y = (v: number) => padding.top + innerH - ((v - min) / (max - min || 1)) * innerH;
-  const line = data.map((d, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(2)},${y(d.value).toFixed(2)}`).join(" ");
-  const area = `${line} L${x(data.length - 1).toFixed(2)},${padding.top + innerH} L${x(0).toFixed(2)},${padding.top + innerH} Z`;
-  const gridLines = [0, 0.25, 0.5, 0.75, 1].map((t) => padding.top + innerH * t);
+
+  const chartMargin = {
+    top: padding.top,
+    right: padding.right,
+    bottom: showAxes ? Math.max(0, padding.bottom - 18) : padding.bottom,
+    left: showAxes ? Math.max(0, padding.left - 30) : padding.left,
+  };
+
+  const tickEvery = data.length > 14 ? Math.ceil(data.length / 7) : 1;
+  const xTickFormatter = (label: string, index: number) => {
+    if (index === data.length - 1 || index % tickEvery === 0) return label;
+    return "";
+  };
+
+  // Recharts v3.6 + React 19 doesn't reliably fire chart-level `onClick` —
+  // the wrapper div receives the DOM click but the React handler never
+  // runs through. Wrap the chart in our own div and compute the bucket
+  // index from the click x-coordinate against the visible data area.
+  const containerRef = React.useRef<HTMLDivElement | null>(null);
+  const handleClickFromContainer = onBucketClick
+    ? (e: React.MouseEvent<HTMLDivElement>) => {
+        const node = containerRef.current;
+        if (!node || data.length === 0) return;
+        const rect = node.getBoundingClientRect();
+        const innerLeft = rect.left + chartMargin.left;
+        const innerRight = rect.right - chartMargin.right;
+        const innerWidth = innerRight - innerLeft;
+        if (innerWidth <= 0) return;
+        const x = e.clientX;
+        // Recharts plots category points evenly across the inner width:
+        // index i sits at innerLeft + (innerWidth * i / (n-1)) for n>1.
+        // Snap the click x to the nearest bucket so a click between two
+        // points always lands on the closer one.
+        const ratio = (x - innerLeft) / innerWidth;
+        const clamped = Math.max(0, Math.min(1, ratio));
+        const lastIdx = data.length - 1;
+        const idx = lastIdx <= 0 ? 0 : Math.round(clamped * lastIdx);
+        const datum = data[idx];
+        if (datum) onBucketClick(datum, idx);
+      }
+    : undefined;
 
   return (
-    <svg
-      viewBox={`0 0 ${width} ${height}`}
-      width={width}
-      height={height}
-      style={{ display: "block", overflow: "visible", maxWidth: "100%", height: "auto" }}
+    <div
+      ref={containerRef}
+      onClick={handleClickFromContainer}
+      style={{ width, height, maxWidth: "100%", cursor: onBucketClick ? "pointer" : undefined }}
     >
-      {cornerRadius > 0 && (
-        <defs>
-          <clipPath id={clipId}>
-            <rect x={padding.left} y={padding.top} width={innerW} height={innerH} rx={cornerRadius} ry={cornerRadius} />
-          </clipPath>
-        </defs>
-      )}
-      {showGrid &&
-        gridLines.map((yy, i) => (
-          <line key={i} x1={padding.left} x2={width - padding.right} y1={yy} y2={yy} stroke={gridColor} strokeWidth="1" />
-        ))}
-      {showAxes &&
-        [1, 0.75, 0.5, 0.25, 0].map((t, i) => (
-          <text
-            key={i}
-            x={padding.left - 8}
-            y={padding.top + innerH * (1 - t) + 3}
-            fontSize="10"
-            fontFamily={axisFont}
-            fill={axisColor}
-            textAnchor="end"
-          >
-            {formatY(max * t)}
-          </text>
-        ))}
-      <g clipPath={cornerRadius > 0 ? `url(#${clipId})` : undefined}>
-        {fill && <path d={area} fill={fill} />}
-        <path d={line} fill="none" stroke={stroke} strokeWidth={strokeWidth} strokeLinejoin="round" strokeLinecap="round" />
-      </g>
-      {showAxes &&
-        data.map((d, i) => {
-          if (data.length > 14 && i % Math.ceil(data.length / 7) !== 0 && i !== data.length - 1) return null;
-          return (
-            <text key={i} x={x(i)} y={height - padding.bottom + 14} fontSize="10" fontFamily={axisFont} fill={axisColor} textAnchor="middle">
-              {d.label}
-            </text>
-          );
-        })}
-    </svg>
+      <ResponsiveContainer width="100%" height="100%">
+        <RAreaChart data={data} margin={chartMargin}>
+          {fill && (
+            <defs>
+              <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={fill} stopOpacity={1} />
+                <stop offset="100%" stopColor={fill} stopOpacity={0.6} />
+              </linearGradient>
+              {cornerRadius > 0 && (
+                <clipPath id={clipId}>
+                  <rect x="0" y="0" width="100%" height="100%" rx={cornerRadius} ry={cornerRadius} />
+                </clipPath>
+              )}
+            </defs>
+          )}
+          {showGrid && <CartesianGrid stroke={gridColor} vertical={false} />}
+          <XAxis
+            dataKey="label"
+            hide={!showAxes}
+            tick={{ fill: axisColor, fontSize: 10, fontFamily: axisFont }}
+            tickFormatter={xTickFormatter}
+            interval={0}
+            axisLine={false}
+            tickLine={false}
+            padding={{ left: 0, right: 0 }}
+          />
+          <YAxis
+            hide={!showAxes}
+            tick={{ fill: axisColor, fontSize: 10, fontFamily: axisFont }}
+            tickFormatter={formatY}
+            axisLine={false}
+            tickLine={false}
+            width={36}
+          />
+          <Tooltip
+            cursor={{ stroke, strokeWidth: 1, strokeDasharray: "3 3", strokeOpacity: 0.6 }}
+            content={<AreaTooltipContent data={data} accent={stroke} formatValue={formatTooltipValue} />}
+            isAnimationActive={false}
+          />
+          <Area
+            type="monotone"
+            dataKey="value"
+            stroke={stroke}
+            strokeWidth={strokeWidth}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            fill={fill ? `url(#${gradientId})` : "none"}
+            isAnimationActive={false}
+            clipPath={cornerRadius > 0 && fill ? `url(#${clipId})` : undefined}
+            activeDot={{ r: 4, stroke, strokeWidth: 1.5, fill: "#fff" }}
+          />
+        </RAreaChart>
+      </ResponsiveContainer>
+    </div>
   );
+}
+
+function AreaTooltipContent({
+  data,
+  accent,
+  formatValue,
+  active,
+  payload,
+}: {
+  data: AreaDatum[];
+  accent: string;
+  formatValue?: (n: number) => string;
+  active?: boolean;
+  payload?: Array<{ payload?: AreaDatum }>;
+}) {
+  const T = useTheme();
+  if (!active || !payload || payload.length === 0) return null;
+  const point = payload[0]?.payload;
+  if (!point) return null;
+  const idx = data.findIndex((d) => d.label === point.label);
+  const prev = idx > 0 ? data[idx - 1] : null;
+  const fmt = formatValue ?? ((n: number) => `₾${Math.round(n).toLocaleString("en-US")}`);
+  const delta =
+    prev && prev.value > 0 ? ((point.value - prev.value) / prev.value) * 100 : null;
+  const deltaColor = delta === null ? T.dim : delta >= 0 ? T.green : T.accent;
+  const deltaSign = delta === null ? "" : delta >= 0 ? "+" : "";
+
+  return (
+    <div
+      style={{
+        background: T.panel,
+        border: `1px solid ${T.lineStrong}`,
+        borderRadius: 10,
+        padding: "10px 12px",
+        boxShadow: T.shadow,
+        fontFamily: T.sans,
+        minWidth: 140,
+      }}
+    >
+      <div
+        style={{
+          fontSize: 10,
+          color: T.dim,
+          fontFamily: T.mono,
+          letterSpacing: 0.6,
+          textTransform: "uppercase",
+          marginBottom: 4,
+        }}
+      >
+        {point.label}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ width: 8, height: 8, borderRadius: 4, background: accent, flexShrink: 0 }} />
+        <span
+          style={{
+            fontSize: 15,
+            fontWeight: 700,
+            color: T.text,
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          {fmt(point.value)}
+        </span>
+      </div>
+      {prev && (
+        <div
+          style={{
+            fontSize: 11,
+            color: T.muted,
+            marginTop: 4,
+            fontFamily: T.mono,
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          vs <span style={{ color: T.dim }}>{prev.label}</span> {fmt(prev.value)}
+          {delta !== null && (
+            <span style={{ color: deltaColor, marginLeft: 6 }}>
+              {deltaSign}
+              {delta.toFixed(0)}%
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export interface DonutSegment {
+  value: number;
+  color: string;
+  /** Optional human-readable label shown in the tooltip on hover. */
+  name?: string;
 }
 
 export function Donut({
@@ -107,8 +264,10 @@ export function Donut({
   centerValue,
   centerColor = "#333",
   labelFont = "ui-monospace, monospace",
+  formatTooltipValue,
+  onSegmentClick,
 }: {
-  segments: { value: number; color: string }[];
+  segments: DonutSegment[];
   size?: number;
   thickness?: number;
   gap?: number;
@@ -116,47 +275,198 @@ export function Donut({
   centerValue?: string;
   centerColor?: string;
   labelFont?: string;
+  formatTooltipValue?: (n: number) => string;
+  /** Fires when the user clicks a segment. Receives the original segment
+   *  (so the consumer can read its `name`) plus its index in the `segments`
+   *  array. The empty placeholder shown when every value is 0 does not
+   *  fire this. */
+  onSegmentClick?: (segment: DonutSegment, index: number) => void;
 }) {
-  const r = size / 2;
-  const inner = r - thickness;
-  const total = segments.reduce((s, x) => s + x.value, 0) || 1;
-  let acc = -Math.PI / 2;
-  const tau = Math.PI * 2;
+  const inner = Math.max(0, size / 2 - thickness);
+  const outer = size / 2;
+  const data = segments.map((s, i) => ({
+    name: s.name ?? `Segment ${i + 1}`,
+    value: s.value,
+    color: s.color,
+  }));
+  const hasData = data.some((d) => d.value > 0);
+  const total = data.reduce((s, d) => s + d.value, 0) || 1;
 
-  const arc = (startA: number, endA: number) => {
-    const large = endA - startA > Math.PI ? 1 : 0;
-    const sx = r + r * Math.cos(startA);
-    const sy = r + r * Math.sin(startA);
-    const ex = r + r * Math.cos(endA);
-    const ey = r + r * Math.sin(endA);
-    const sx2 = r + inner * Math.cos(endA);
-    const sy2 = r + inner * Math.sin(endA);
-    const ex2 = r + inner * Math.cos(startA);
-    const ey2 = r + inner * Math.sin(startA);
-    return `M${sx},${sy} A${r},${r} 0 ${large} 1 ${ex},${ey} L${sx2},${sy2} A${inner},${inner} 0 ${large} 0 ${ex2},${ey2} Z`;
-  };
+  const clickable = hasData && !!onSegmentClick;
+  // Recharts v3.6 + React 19 doesn't reliably fire `<Pie onClick>` per cell.
+  // Catch the click on the donut's outer wrapper and resolve it ourselves
+  // by mapping the click position to an angular sweep of the ring.
+  const donutRef = React.useRef<HTMLDivElement | null>(null);
+  const handleDonutClick = clickable
+    ? (e: React.MouseEvent<HTMLDivElement>) => {
+        const node = donutRef.current;
+        if (!node) return;
+        const rect = node.getBoundingClientRect();
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height / 2;
+        const dx = e.clientX - cx;
+        const dy = e.clientY - cy;
+        const radius = Math.hypot(dx, dy);
+        // Clicks inside the inner hole or beyond the outer ring don't
+        // belong to a segment — leave the donut as a pure data widget.
+        if (radius < inner || radius > outer + 6) return;
+        // Donut renders clockwise from 12 o'clock (startAngle=90, endAngle=-270
+        // in Recharts' coord system). Compute the angular fraction of the
+        // click around that same axis: 0 = top, 0.25 = right, 0.5 = bottom,
+        // 0.75 = left.
+        const angleFromTopClockwise = (Math.atan2(dx, -dy) + Math.PI * 2) % (Math.PI * 2);
+        const fraction = angleFromTopClockwise / (Math.PI * 2);
+        // Walk segments accumulating their fractional value until we pass
+        // the click's angular position.
+        let acc = 0;
+        for (let i = 0; i < segments.length; i++) {
+          const seg = segments[i];
+          const segFrac = seg.value / total;
+          if (segFrac <= 0) continue;
+          if (fraction <= acc + segFrac) {
+            onSegmentClick!(seg, i);
+            return;
+          }
+          acc += segFrac;
+        }
+      }
+    : undefined;
 
   return (
-    <svg width={size} height={size} style={{ display: "block" }}>
-      {segments.map((s, i) => {
-        const frac = s.value / total;
-        const startA = acc;
-        const endA = acc + frac * tau - gap / r;
-        acc += frac * tau;
-        if (endA <= startA) return null;
-        return <path key={i} d={arc(startA, endA)} fill={s.color} />;
-      })}
-      {centerLabel && (
-        <text x={r} y={r - 4} textAnchor="middle" fontSize="11" fontFamily={labelFont} fill={centerColor} style={{ opacity: 0.55, letterSpacing: 0.6, textTransform: "uppercase" }}>
-          {centerLabel}
-        </text>
+    <div
+      ref={donutRef}
+      onClick={handleDonutClick}
+      style={{ position: "relative", width: size, height: size, cursor: clickable ? "pointer" : undefined }}
+    >
+      <PieChart width={size} height={size}>
+        <Pie
+          data={hasData ? data : [{ name: "empty", value: 1, color: "transparent" }]}
+          dataKey="value"
+          cx="50%"
+          cy="50%"
+          innerRadius={inner}
+          outerRadius={outer}
+          paddingAngle={hasData ? gap : 0}
+          startAngle={90}
+          endAngle={-270}
+          stroke="none"
+          isAnimationActive={false}
+        >
+          {(hasData ? data : [{ color: "transparent" }]).map((d, i) => (
+            <Cell key={i} fill={d.color} />
+          ))}
+        </Pie>
+        {hasData && (
+          <Tooltip
+            content={<DonutTooltipContent total={total} formatValue={formatTooltipValue} />}
+            isAnimationActive={false}
+          />
+        )}
+      </PieChart>
+      {(centerLabel || centerValue) && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            pointerEvents: "none",
+          }}
+        >
+          {centerLabel && (
+            <span
+              style={{
+                fontSize: 11,
+                fontFamily: labelFont,
+                color: centerColor,
+                opacity: 0.55,
+                letterSpacing: 0.6,
+                textTransform: "uppercase",
+                lineHeight: 1.2,
+              }}
+            >
+              {centerLabel}
+            </span>
+          )}
+          {centerValue && (
+            <span
+              style={{
+                fontSize: 22,
+                fontFamily: labelFont,
+                color: centerColor,
+                fontWeight: 600,
+                marginTop: 2,
+                lineHeight: 1.1,
+              }}
+            >
+              {centerValue}
+            </span>
+          )}
+        </div>
       )}
-      {centerValue && (
-        <text x={r} y={r + 18} textAnchor="middle" fontSize="22" fontFamily={labelFont} fill={centerColor} fontWeight={600}>
-          {centerValue}
-        </text>
-      )}
-    </svg>
+    </div>
+  );
+}
+
+function DonutTooltipContent({
+  total,
+  formatValue,
+  active,
+  payload,
+}: {
+  total: number;
+  formatValue?: (n: number) => string;
+  active?: boolean;
+  payload?: Array<{ payload?: { name: string; value: number; color: string } }>;
+}) {
+  const T = useTheme();
+  if (!active || !payload || payload.length === 0) return null;
+  const point = payload[0]?.payload;
+  if (!point) return null;
+  const fmt = formatValue ?? ((n: number) => `₾${Math.round(n).toLocaleString("en-US")}`);
+  const share = total > 0 ? (point.value / total) * 100 : 0;
+
+  return (
+    <div
+      style={{
+        background: T.panel,
+        border: `1px solid ${T.lineStrong}`,
+        borderRadius: 10,
+        padding: "10px 12px",
+        boxShadow: T.shadow,
+        fontFamily: T.sans,
+        minWidth: 140,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+        <span style={{ width: 8, height: 8, borderRadius: 4, background: point.color, flexShrink: 0 }} />
+        <span style={{ fontSize: 12, fontWeight: 600, color: T.text }}>{point.name}</span>
+      </div>
+      <div
+        style={{
+          fontSize: 15,
+          fontWeight: 700,
+          color: T.text,
+          fontFamily: T.sans,
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
+        {fmt(point.value)}
+      </div>
+      <div
+        style={{
+          fontSize: 11,
+          color: T.muted,
+          fontFamily: T.mono,
+          marginTop: 2,
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
+        {share.toFixed(1)}% of total
+      </div>
+    </div>
   );
 }
 
@@ -175,18 +485,38 @@ export function Sparkline({
   strokeWidth?: number;
   fill?: string;
 }) {
+  const gradientId = React.useId();
   if (!values || values.length === 0) return null;
-  const max = Math.max(...values);
-  const min = Math.min(...values);
-  const x = (i: number) => (i / (values.length - 1 || 1)) * width;
-  const y = (v: number) => height - ((v - min) / (max - min || 1)) * height;
-  const line = values.map((v, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
-  const area = fill !== "none" ? `${line} L${width},${height} L0,${height} Z` : null;
+  const data = values.map((v, i) => ({ i, value: v }));
+  const usesFill = fill && fill !== "none";
+
   return (
-    <svg width={width} height={height} style={{ display: "block" }}>
-      {area && <path d={area} fill={fill} />}
-      <path d={line} fill="none" stroke={stroke} strokeWidth={strokeWidth} strokeLinejoin="round" strokeLinecap="round" />
-    </svg>
+    <div style={{ width, height }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <RAreaChart data={data} margin={{ top: 1, right: 0, bottom: 1, left: 0 }}>
+          {usesFill && (
+            <defs>
+              <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={fill} stopOpacity={1} />
+                <stop offset="100%" stopColor={fill} stopOpacity={0.6} />
+              </linearGradient>
+            </defs>
+          )}
+          <XAxis dataKey="i" hide />
+          <YAxis hide domain={["dataMin", "dataMax"]} />
+          <Area
+            type="monotone"
+            dataKey="value"
+            stroke={stroke}
+            strokeWidth={strokeWidth}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            fill={usesFill ? `url(#${gradientId})` : "none"}
+            isAnimationActive={false}
+          />
+        </RAreaChart>
+      </ResponsiveContainer>
+    </div>
   );
 }
 

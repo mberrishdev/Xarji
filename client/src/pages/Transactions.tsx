@@ -1,10 +1,12 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useTheme, useViewport } from "../ink/theme";
 import { Card, CardLabel, PageHeader } from "../ink/primitives";
 import { TxRow, type InkTx } from "../ink/TxRow";
 import { useConvertedPayments, useFailedPayments } from "../hooks/useTransactions";
 import { useBankSenders } from "../hooks/useBankSenders";
+import { useRangeState } from "../hooks/useRangeState";
+import { isInRange, isValidIsoDateRange } from "../lib/dateRange";
 import { DEFAULT_CATEGORIES } from "../lib/utils";
 import { useCategorizer } from "../hooks/useCategorizer";
 import { currencySymbol, formatLocalDay, parseLocalDay } from "../ink/format";
@@ -18,19 +20,31 @@ export function Transactions() {
   const { failedPayments } = useFailedPayments();
   const { senders } = useBankSenders();
   const { getCategory, categorize: categorizeId } = useCategorizer();
-
-  // `?category=<id>` pre-selects the category filter on load. Categories
-  // page navigates here with this param when the user clicks "All →" on
-  // a category's recent-transactions card. Values that don't match a
-  // known category id fall through to the "all" default.
+  // Drill-down search params accepted on first paint. Anything that doesn't
+  // match falls through to the unfiltered default — chart drill-downs can
+  // freely add params without breaking the page if a future link mistypes
+  // a key.
+  //   ?category=<id>          — pre-select category filter
+  //   ?merchant=<text>        — pre-fill the search box (substring match)
+  //   ?dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD
+  //                           — switch range to "Custom" with these dates
   const [searchParams] = useSearchParams();
   const initialCat = (() => {
     const raw = searchParams.get("category");
     if (!raw) return "all";
     return DEFAULT_CATEGORIES.some((c) => c.id === raw) ? raw : "all";
   })();
+  const initialMerchant = searchParams.get("merchant") || "";
+  const initialCustom = (() => {
+    const start = searchParams.get("dateFrom") || "";
+    const end = searchParams.get("dateTo") || "";
+    const candidate = { start, end };
+    return isValidIsoDateRange(candidate) ? candidate : undefined;
+  })();
 
-  const [search, setSearch] = useState("");
+  const { range, props: rangeProps } = useRangeState("Month", { customInitial: initialCustom });
+
+  const [search, setSearch] = useState(initialMerchant);
   const [bank, setBank] = useState("all");
   const [cat, setCat] = useState(initialCat);
   const [kind, setKind] = useState<TxKind>("all");
@@ -72,6 +86,7 @@ export function Transactions() {
 
   const filtered = useMemo(() => {
     return allTx.filter((t) => {
+      if (!isInRange(t.transactionDate, range)) return false;
       if (bank !== "all" && t.bankSenderId !== bank) return false;
       if (cat !== "all" && t.category !== cat) return false;
       if (kind !== "all" && t.kind !== kind) return false;
@@ -81,7 +96,7 @@ export function Transactions() {
       }
       return true;
     });
-  }, [allTx, bank, cat, kind, search]);
+  }, [allTx, bank, cat, kind, search, range]);
 
   const groups = useMemo(() => {
     const g: Record<string, InkTx[]> = {};
@@ -94,7 +109,15 @@ export function Transactions() {
   }, [filtered]);
 
   const dayKeys = Object.keys(groups).sort((a, b) => b.localeCompare(a));
-  const selected = selectedId ? allTx.find((t) => t.id === selectedId) : null;
+  // Resolve the side panel from `filtered`, not `allTx`. If the active
+  // filters no longer contain the selection, drop it so the panel doesn't
+  // contradict the visible list.
+  const selected = selectedId ? filtered.find((t) => t.id === selectedId) : null;
+  useEffect(() => {
+    if (selectedId && !filtered.some((t) => t.id === selectedId)) {
+      setSelectedId(null);
+    }
+  }, [filtered, selectedId]);
 
   const bankOptions = senders.length > 0
     ? senders.map((s) => ({ id: s.senderId, name: s.displayName }))
@@ -135,7 +158,7 @@ export function Transactions() {
       <PageHeader
         eyebrow="All transactions · read-only from SMS"
         title="Transactions"
-        active="Month"
+        {...rangeProps}
         rightSlot={
           <span style={{ fontFamily: T.mono, fontSize: 11, color: T.dim }}>
             {filtered.length.toLocaleString("en-US")} results

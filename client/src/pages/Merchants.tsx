@@ -1,16 +1,17 @@
 import { useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useTheme, useViewport } from "../ink/theme";
 import { Card, PageHeader } from "../ink/primitives";
 import { useConvertedPayments } from "../hooks/useTransactions";
 import { useCategorizer } from "../hooks/useCategorizer";
-import { isWithinInterval, startOfMonth, endOfMonth, format } from "date-fns";
+import { useRangeState } from "../hooks/useRangeState";
+import { isInRange, rangeToDateParams } from "../lib/dateRange";
 
 export function Merchants() {
   const T = useTheme();
   const vp = useViewport();
-  const now = new Date();
-  const monthStart = startOfMonth(now);
-  const monthEnd = endOfMonth(now);
+  const navigate = useNavigate();
+  const { range, props: rangeProps } = useRangeState("Month");
   const { payments } = useConvertedPayments();
   const { getCategory } = useCategorizer();
   const [search, setSearch] = useState("");
@@ -31,7 +32,7 @@ export function Merchants() {
     const map: Record<string, MerchantAgg> = {};
     for (const p of payments) {
       if (p.gelAmount === null) continue;
-      if (!isWithinInterval(new Date(p.transactionDate), { start: monthStart, end: monthEnd })) continue;
+      if (!isInRange(p.transactionDate, range)) continue;
       const key = p.merchant || "Unknown";
       const raw = p.rawMessage || "";
       if (!map[key]) {
@@ -49,7 +50,7 @@ export function Merchants() {
       map[key].count += 1;
     }
     return Object.values(map).sort((a, b) => b.total - a.total);
-  }, [payments, monthStart, monthEnd]);
+  }, [payments, range]);
 
   const total = merchants.reduce((s, m) => s + m.total, 0);
   const filtered = merchants.filter(
@@ -61,9 +62,9 @@ export function Merchants() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: T.density.gap, height: "100%" }}>
       <PageHeader
-        eyebrow={`Who you paid · ${format(now, "MMMM")}`}
+        eyebrow={`Who you paid · ${range.label}`}
         title="Merchants"
-        active="Month"
+        {...rangeProps}
         rightSlot={<span style={{ fontFamily: T.mono, fontSize: 11, color: T.dim }}>{merchants.length} unique</span>}
       />
 
@@ -126,14 +127,29 @@ export function Merchants() {
               const cat = getCategory(m.merchant, m.rawMerchant);
               const pct = (m.total / Math.max(1, total)) * 100;
               return (
-                <div
+                <button
                   key={m.merchant}
+                  onClick={() => {
+                    const { dateFrom, dateTo } = rangeToDateParams(range);
+                    navigate(
+                      `/transactions?merchant=${encodeURIComponent(m.merchant)}&dateFrom=${dateFrom}&dateTo=${dateTo}`
+                    );
+                  }}
                   style={{
                     display: "grid",
                     gridTemplateColumns: cols,
                     padding: "13px 24px",
+                    borderTop: 0,
+                    borderLeft: 0,
+                    borderRight: 0,
                     borderBottom: `1px solid ${T.line}`,
                     alignItems: "center",
+                    width: "100%",
+                    background: "transparent",
+                    textAlign: "left",
+                    cursor: "pointer",
+                    color: "inherit",
+                    font: "inherit",
                   }}
                 >
                   <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
@@ -217,7 +233,7 @@ export function Merchants() {
                   >
                     ₾{Math.round(m.total)}
                   </div>
-                </div>
+                </button>
               );
             })
           )}
