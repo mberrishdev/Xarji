@@ -1,36 +1,29 @@
-// Anthropic provider — uses client.messages.stream() with adaptive
-// thinking (per the claude-api skill default for anything non-trivial).
-// Browser usage requires `dangerouslyAllowBrowser: true`; XSS-exfil
-// risk is acceptable here because Xarji is a single-user local-first
-// app with no third-party scripts on the page.
+// Anthropic provider — runs inside xarji-core. The browser never sees
+// the API key; it sends a generic AIStreamRequest to /api/ai/stream and
+// the service forwards to api.anthropic.com using the key stored in
+// ~/.xarji/config.json.
 
 import Anthropic from "@anthropic-ai/sdk";
 import type {
   AICoreMessage,
-  AIProviderClient,
-  AIStreamEvent,
-  AIStreamOpts,
+  AIProvider,
   AIStopReason,
-} from "../types";
+  AIStreamEvent,
+  AIToolDefinition,
+} from "./types";
 
-export function makeAnthropicProvider(apiKey: string): AIProviderClient {
-  const client = new Anthropic({
-    apiKey,
-    dangerouslyAllowBrowser: true,
-  });
-
+export function makeAnthropicProvider(): AIProvider {
   return {
     id: "anthropic",
-    async *stream(opts: AIStreamOpts): AsyncIterable<AIStreamEvent> {
+    async *stream(opts): AsyncIterable<AIStreamEvent> {
+      const client = new Anthropic({ apiKey: opts.apiKey });
       const messages = opts.messages.map(toAnthropicMessage);
-      const tools = opts.tools.map((t) => ({
+      const tools = opts.tools.map((t: AIToolDefinition) => ({
         name: t.name,
         description: t.description,
         input_schema: t.inputSchema as Anthropic.Tool["input_schema"],
       }));
 
-      // Tool input arrives as JSON streamed over multiple deltas. Buffer
-      // by content-block index and finalize on content_block_stop.
       const toolBuffers = new Map<number, { id: string; name: string; jsonText: string }>();
       let stopReason: AIStopReason = "other";
 
@@ -84,7 +77,7 @@ export function makeAnthropicProvider(apiKey: string): AIProviderClient {
           }
         }
       } catch (err) {
-        yield { kind: "error", error: err };
+        yield { kind: "error", error: err instanceof Error ? err.message : String(err) };
         return;
       }
 
@@ -110,7 +103,6 @@ function toAnthropicMessage(m: AICoreMessage): Anthropic.MessageParam {
             is_error: p.isError,
           };
         }
-        // tool_use blocks should never appear in a user message; skip.
         return { type: "text", text: "" };
       }),
     };

@@ -28,6 +28,15 @@ export interface Config {
     headers?: Record<string, string>;
   };
 
+  // AI assistant provider keys. Stored on disk in ~/.xarji/config.json
+  // so they never reach the browser bundle. The dashboard talks to
+  // /api/ai/* and the service forwards to api.anthropic.com /
+  // api.openai.com using whichever key is set here.
+  aiProviderKeys: {
+    anthropic?: string;
+    openai?: string;
+  };
+
   // Polling interval in milliseconds (fallback if file watching fails)
   pollIntervalMs: number;
 }
@@ -57,6 +66,8 @@ export const defaultConfig: Config = {
       "Content-Type": "application/json",
     },
   },
+
+  aiProviderKeys: {},
 
   pollIntervalMs: 60000, // 1 minute fallback
 };
@@ -102,6 +113,35 @@ export async function saveConfig(config: Partial<Config>): Promise<void> {
 
   const merged = { ...defaultConfig, ...config };
   await Bun.write(configPath, JSON.stringify(merged, null, 2));
+}
+
+// Patch the on-disk config without overwriting the user's other
+// settings. Reads the current file, deep-merges the patch, writes back.
+// Used by /api/ai/keys so the user can add/rotate provider keys without
+// re-running the full setup wizard.
+export async function patchConfig(patch: Partial<Config>): Promise<Config> {
+  const configDir = join(home, ".xarji");
+  const configPath = join(configDir, "config.json");
+  await Bun.$`mkdir -p ${configDir}`;
+
+  let current: Config;
+  try {
+    const text = require("fs").readFileSync(configPath, "utf-8");
+    current = { ...defaultConfig, ...JSON.parse(text) };
+  } catch {
+    current = { ...defaultConfig };
+  }
+
+  const next: Config = {
+    ...current,
+    ...patch,
+    instantdb: { ...current.instantdb, ...(patch.instantdb ?? {}) },
+    webhook: { ...current.webhook, ...(patch.webhook ?? {}) },
+    aiProviderKeys: { ...current.aiProviderKeys, ...(patch.aiProviderKeys ?? {}) },
+  };
+
+  await Bun.write(configPath, JSON.stringify(next, null, 2));
+  return next;
 }
 
 export const CONFIG_DIR = join(home, ".xarji");

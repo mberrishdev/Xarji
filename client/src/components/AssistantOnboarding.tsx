@@ -1,20 +1,41 @@
 import { useState } from "react";
 import { useTheme } from "../ink/theme";
 import { Card, CardLabel, Pill, PageHeader } from "../ink/primitives";
-import { AI_PROVIDERS, getProvider, type AIConfig, type AIProviderId } from "../lib/aiConfig";
+import {
+  AI_PROVIDERS,
+  getProvider,
+  saveAIConfig,
+  saveProviderKey,
+  type AIProviderId,
+} from "../lib/aiConfig";
 
-export function AssistantOnboarding({ onSave }: { onSave: (cfg: AIConfig) => void }) {
+export function AssistantOnboarding({ onSaved }: { onSaved: () => void }) {
   const T = useTheme();
   const [provider, setProvider] = useState<AIProviderId>("anthropic");
   const [apiKey, setApiKey] = useState("");
   const [revealed, setRevealed] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const p = getProvider(provider);
   const validKey = apiKey.trim().startsWith(p.keyPrefix) && apiKey.trim().length >= 20;
 
-  const handleSave = () => {
-    if (!validKey) return;
-    onSave({ provider, apiKey: apiKey.trim(), model: p.defaultModel });
+  const handleSave = async () => {
+    if (!validKey || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      // Key goes straight to xarji-core via /api/ai/keys; never touches
+      // localStorage or the JS bundle context. Local AIConfig only
+      // remembers which provider and model the user picked.
+      await saveProviderKey(provider, apiKey.trim());
+      saveAIConfig({ provider, model: p.defaultModel });
+      onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -269,13 +290,13 @@ export function AssistantOnboarding({ onSave }: { onSave: (cfg: AIConfig) => voi
           <div>
             <button
               onClick={handleSave}
-              disabled={!validKey}
+              disabled={!validKey || saving}
               style={{
                 width: "100%",
                 padding: "14px 18px",
                 borderRadius: T.rMd,
                 border: "none",
-                cursor: validKey ? "pointer" : "not-allowed",
+                cursor: validKey && !saving ? "pointer" : "not-allowed",
                 background: validKey ? T.accent : T.panelAlt,
                 color: validKey ? "#fff" : T.dim,
                 fontSize: 14,
@@ -283,10 +304,28 @@ export function AssistantOnboarding({ onSave }: { onSave: (cfg: AIConfig) => voi
                 fontFamily: T.sans,
                 letterSpacing: -0.1,
                 transition: "all .15s ease",
+                opacity: saving ? 0.7 : 1,
               }}
             >
-              {validKey ? `Connect ${p.name} →` : "Paste a valid key to continue"}
+              {saving
+                ? "Saving…"
+                : validKey
+                  ? `Connect ${p.name} →`
+                  : "Paste a valid key to continue"}
             </button>
+            {error && (
+              <div
+                style={{
+                  marginTop: 8,
+                  fontSize: 12,
+                  color: T.accent,
+                  fontFamily: T.sans,
+                  textAlign: "center",
+                }}
+              >
+                {error}
+              </div>
+            )}
             <div
               style={{
                 fontSize: 10.5,

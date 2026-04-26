@@ -1,32 +1,19 @@
-// Loads the provider implementation lazily so the inactive SDK never
-// reaches the user's bundle. Each provider is its own dynamic-import
-// chunk; switching providers in Settings doesn't require a reload to
-// download the new SDK — just the next `getProviderClient()` call.
+// Returns the service-proxy client for the given provider id. There's
+// no longer a per-provider browser SDK to dynamically import — the
+// service holds the keys and routes to api.anthropic.com /
+// api.openai.com itself. The dashboard speaks SSE to /api/ai/stream
+// regardless of which model the user picked.
 
+import { makeServiceProvider } from "./providers/service";
 import type { AIProviderClient } from "./types";
 import type { AIProviderId } from "../aiConfig";
 
-const cache = new Map<string, AIProviderClient>();
+const cache = new Map<AIProviderId, AIProviderClient>();
 
-function cacheKey(id: AIProviderId, apiKey: string): string {
-  return `${id}::${apiKey}`;
-}
-
-export async function getProviderClient(id: AIProviderId, apiKey: string): Promise<AIProviderClient> {
-  const key = cacheKey(id, apiKey);
-  const hit = cache.get(key);
+export function getProviderClient(id: AIProviderId): AIProviderClient {
+  const hit = cache.get(id);
   if (hit) return hit;
-
-  let client: AIProviderClient;
-  if (id === "anthropic") {
-    const mod = await import("./providers/anthropic");
-    client = mod.makeAnthropicProvider(apiKey);
-  } else if (id === "openai") {
-    const mod = await import("./providers/openai");
-    client = mod.makeOpenAIProvider(apiKey);
-  } else {
-    throw new Error(`Unknown AI provider: ${id}`);
-  }
-  cache.set(key, client);
+  const client = makeServiceProvider(id);
+  cache.set(id, client);
   return client;
 }

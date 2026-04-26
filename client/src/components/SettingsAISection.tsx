@@ -1,7 +1,9 @@
-// "AI Assistant" card for the Manage screen. When no key is connected
-// it shows a primary "Set up assistant →" CTA that navigates to the
-// Assistant onboarding. When connected it shows the provider, model
-// picker, masked key, and a Replace / Disconnect path.
+// "AI Assistant" card for the Manage screen. Shows status for each
+// provider (Anthropic / OpenAI), lets the user connect / replace /
+// disconnect each key independently, and exposes a model picker for
+// the active provider. Keys live on the service in
+// ~/.xarji/config.json — this card never sees the actual key value,
+// just the boolean "is configured" from /api/ai/keys.
 
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -9,54 +11,70 @@ import { useTheme } from "../ink/theme";
 import { Card, CardTitle } from "../ink/primitives";
 import {
   AI_PROVIDERS,
-  clearAIConfig,
+  deleteProviderKey,
   getProvider,
   loadAIConfig,
-  maskApiKey,
   onAIConfigChange,
   saveAIConfig,
+  saveProviderKey,
   type AIConfig,
   type AIProviderId,
 } from "../lib/aiConfig";
-
-type Mode = "view" | "replace";
+import { useAIKeyStatus } from "../hooks/useAIKeyStatus";
 
 export function SettingsAISection() {
   const T = useTheme();
   const navigate = useNavigate();
+  const { status, isLoading } = useAIKeyStatus();
   const [config, setConfig] = useState<AIConfig | null>(loadAIConfig);
-  const [mode, setMode] = useState<Mode>("view");
-  const [editProvider, setEditProvider] = useState<AIProviderId>("anthropic");
+  const [editingProvider, setEditingProvider] = useState<AIProviderId | null>(null);
   const [editKey, setEditKey] = useState("");
   const [revealed, setRevealed] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => onAIConfigChange(() => setConfig(loadAIConfig())), []);
 
-  const provider = useMemo(() => (config ? getProvider(config.provider) : null), [config]);
-  const editProviderObj = getProvider(editProvider);
-  const validKey =
-    editKey.trim().startsWith(editProviderObj.keyPrefix) && editKey.trim().length >= 20;
+  const activeProvider = useMemo(() => (config ? getProvider(config.provider) : null), [config]);
+  const connectedCount = (status.anthropic ? 1 : 0) + (status.openai ? 1 : 0);
 
-  const startReplace = () => {
-    setMode("replace");
-    setEditProvider(config?.provider ?? "anthropic");
+  const editingObj = editingProvider ? getProvider(editingProvider) : null;
+  const validEditKey = editingObj
+    ? editKey.trim().startsWith(editingObj.keyPrefix) && editKey.trim().length >= 20
+    : false;
+
+  const startEdit = (id: AIProviderId) => {
+    setEditingProvider(id);
     setEditKey("");
     setRevealed(false);
+    setError(null);
   };
 
-  const cancelReplace = () => {
-    setMode("view");
+  const cancelEdit = () => {
+    setEditingProvider(null);
     setEditKey("");
+    setError(null);
   };
 
-  const saveReplace = () => {
-    if (!validKey) return;
-    saveAIConfig({
-      provider: editProvider,
-      apiKey: editKey.trim(),
-      model: editProviderObj.defaultModel,
-    });
-    setMode("view");
+  const saveEdit = async () => {
+    if (!validEditKey || !editingProvider || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await saveProviderKey(editingProvider, editKey.trim());
+      // If this was the user's first key, snap the local active config
+      // to the provider they just connected.
+      if (!config || !status[config.provider]) {
+        const obj = getProvider(editingProvider);
+        saveAIConfig({ provider: editingProvider, model: obj.defaultModel });
+      }
+      setEditingProvider(null);
+      setEditKey("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
   };
 
   const updateModel = (model: string) => {
@@ -64,10 +82,20 @@ export function SettingsAISection() {
     saveAIConfig({ ...config, model });
   };
 
-  const disconnect = () => {
-    if (window.confirm("Disconnect AI? Your key will be removed from this device.")) {
-      clearAIConfig();
-      setMode("view");
+  const disconnect = async (id: AIProviderId) => {
+    if (!window.confirm(`Disconnect ${getProvider(id).name}? The key will be removed from this device.`)) {
+      return;
+    }
+    try {
+      await deleteProviderKey(id);
+      // If the active provider lost its key, drop the local pointer so
+      // the chat UI re-routes (or shows the onboarding gate).
+      if (config?.provider === id) {
+        saveAIConfig({ provider: id, model: getProvider(id).defaultModel });
+        setConfig(null);
+      }
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : String(err));
     }
   };
 
@@ -103,11 +131,11 @@ export function SettingsAISection() {
           <div>
             <CardTitle>AI Assistant</CardTitle>
             <div style={{ fontSize: 12, color: T.muted, marginTop: 2, fontFamily: T.sans }}>
-              Provider, model, and API key. The key never leaves this device.
+              Provider keys live on this Mac in <code style={{ fontFamily: T.mono }}>~/.xarji/config.json</code>. The browser never sees them.
             </div>
           </div>
         </div>
-        {config && (
+        {!isLoading && connectedCount > 0 && (
           <span
             style={{
               padding: "4px 10px",
@@ -121,12 +149,12 @@ export function SettingsAISection() {
               fontFamily: T.sans,
             }}
           >
-            connected
+            {connectedCount} of 2 connected
           </span>
         )}
       </div>
 
-      {!config && (
+      {!isLoading && connectedCount === 0 && (
         <div
           style={{
             display: "flex",
@@ -136,6 +164,7 @@ export function SettingsAISection() {
             background: T.accentSoft,
             border: `1px solid ${T.accent}33`,
             borderRadius: T.rMd,
+            marginBottom: 14,
           }}
         >
           <div
@@ -147,8 +176,8 @@ export function SettingsAISection() {
               lineHeight: 1.5,
             }}
           >
-            Connect Claude or OpenAI to unlock the agentic chat. Plans, budgets, filters, and
-            categories — created from natural-language prompts.
+            Connect Claude or OpenAI to unlock the agentic chat. Plans, summaries, transaction
+            search — created from natural-language prompts.
           </div>
           <button
             onClick={() => navigate("/assistant")}
@@ -170,328 +199,258 @@ export function SettingsAISection() {
         </div>
       )}
 
-      {config && provider && mode === "view" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: 12,
-            }}
-          >
-            <ProviderTile provider={provider} active />
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {AI_PROVIDERS.map((pp) => {
+          const isConnected = status[pp.id];
+          const isEditing = editingProvider === pp.id;
+          return (
             <div
+              key={pp.id}
               style={{
-                padding: "16px 18px",
+                padding: "14px 16px",
                 background: T.panelAlt,
                 borderRadius: T.rMd,
                 border: `1px solid ${T.line}`,
                 display: "flex",
                 flexDirection: "column",
-                gap: 10,
+                gap: 12,
               }}
             >
-              <div
-                style={{
-                  fontSize: 10,
-                  color: T.dim,
-                  fontFamily: T.mono,
-                  letterSpacing: 0.6,
-                  textTransform: "uppercase",
-                }}
-              >
-                Model
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <div
+                  style={{
+                    width: 32,
+                    height: 32,
+                    borderRadius: 8,
+                    background: pp.color,
+                    color: "#fff",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: 14,
+                    fontWeight: 800,
+                    fontFamily: T.sans,
+                  }}
+                >
+                  {pp.name.charAt(0)}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 700, color: T.text, fontFamily: T.sans }}>
+                    {pp.name} <span style={{ color: T.dim, fontWeight: 500, fontFamily: T.mono, fontSize: 11 }}>· by {pp.by}</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: T.muted, fontFamily: T.mono, marginTop: 2 }}>
+                    {isConnected ? "Configured · key on disk" : "Not configured"}
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {isConnected ? (
+                    <>
+                      <button
+                        onClick={() => startEdit(pp.id)}
+                        disabled={isEditing}
+                        style={{
+                          padding: "8px 12px",
+                          borderRadius: 8,
+                          border: `1px solid ${T.line}`,
+                          background: "transparent",
+                          color: T.text,
+                          fontSize: 12,
+                          fontWeight: 600,
+                          fontFamily: T.sans,
+                          cursor: isEditing ? "default" : "pointer",
+                          opacity: isEditing ? 0.5 : 1,
+                        }}
+                      >
+                        Replace
+                      </button>
+                      <button
+                        onClick={() => disconnect(pp.id)}
+                        style={{
+                          padding: "8px 12px",
+                          borderRadius: 8,
+                          border: `1px solid ${T.accent}55`,
+                          background: T.accentSoft,
+                          color: T.accent,
+                          fontSize: 12,
+                          fontWeight: 700,
+                          fontFamily: T.sans,
+                          cursor: "pointer",
+                        }}
+                      >
+                        Disconnect
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => startEdit(pp.id)}
+                      disabled={isEditing}
+                      style={{
+                        padding: "8px 14px",
+                        borderRadius: 8,
+                        border: "none",
+                        background: T.accent,
+                        color: "#fff",
+                        fontSize: 12,
+                        fontWeight: 700,
+                        fontFamily: T.sans,
+                        cursor: isEditing ? "default" : "pointer",
+                        opacity: isEditing ? 0.5 : 1,
+                      }}
+                    >
+                      Connect
+                    </button>
+                  )}
+                </div>
               </div>
-              <select
-                value={config.model}
-                onChange={(e) => updateModel(e.target.value)}
-                style={{
-                  background: T.panel,
-                  border: `1px solid ${T.line}`,
-                  color: T.text,
-                  fontSize: 13,
-                  fontFamily: T.mono,
-                  padding: "9px 12px",
-                  borderRadius: 8,
-                  outline: "none",
-                  cursor: "pointer",
-                }}
-              >
-                {provider.models.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-              <div style={{ fontSize: 11, color: T.muted, fontFamily: T.sans, lineHeight: 1.4 }}>
-                Used for new conversations. Active threads keep their model.
-              </div>
-            </div>
-          </div>
 
-          <div
-            style={{
-              padding: "16px 18px",
-              background: T.panelAlt,
-              borderRadius: T.rMd,
-              border: `1px solid ${T.line}`,
-              display: "flex",
-              alignItems: "center",
-              gap: 14,
-              flexWrap: "wrap",
-            }}
-          >
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div
-                style={{
-                  fontSize: 10,
-                  color: T.dim,
-                  fontFamily: T.mono,
-                  letterSpacing: 0.6,
-                  textTransform: "uppercase",
-                }}
-              >
-                API key
-              </div>
-              <div
-                style={{
-                  fontSize: 14,
-                  color: T.text,
-                  fontFamily: T.mono,
-                  fontWeight: 600,
-                  marginTop: 4,
-                  letterSpacing: 0.4,
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                }}
-              >
-                {maskApiKey(config.apiKey)}
-              </div>
+              {isEditing && editingObj && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <div style={{ position: "relative" }}>
+                    <input
+                      type={revealed ? "text" : "password"}
+                      value={editKey}
+                      onChange={(e) => setEditKey(e.target.value)}
+                      placeholder={editingObj.keyPrefix + "••••••••••••••••••••"}
+                      autoComplete="off"
+                      style={{
+                        width: "100%",
+                        padding: "10px 60px 10px 14px",
+                        borderRadius: T.rMd,
+                        background: T.panel,
+                        border: `1px solid ${editKey && !validEditKey ? T.accent + "55" : T.line}`,
+                        color: T.text,
+                        fontSize: 13,
+                        fontFamily: T.mono,
+                        letterSpacing: 0.4,
+                        outline: "none",
+                      }}
+                    />
+                    <button
+                      onClick={() => setRevealed((r) => !r)}
+                      style={{
+                        position: "absolute",
+                        right: 8,
+                        top: "50%",
+                        transform: "translateY(-50%)",
+                        padding: "4px 8px",
+                        fontSize: 9.5,
+                        fontFamily: T.mono,
+                        fontWeight: 700,
+                        letterSpacing: 0.5,
+                        textTransform: "uppercase",
+                        background: "transparent",
+                        border: `1px solid ${T.line}`,
+                        borderRadius: 5,
+                        cursor: "pointer",
+                        color: T.muted,
+                      }}
+                    >
+                      {revealed ? "hide" : "show"}
+                    </button>
+                  </div>
+                  <div style={{ fontSize: 11, color: T.muted, fontFamily: T.sans, lineHeight: 1.4 }}>
+                    {editingObj.keyHint} · Generate one at{" "}
+                    <span style={{ color: T.accent, fontFamily: T.mono }}>{editingObj.docs}</span>
+                  </div>
+                  {error && (
+                    <div style={{ fontSize: 11, color: T.accent, fontFamily: T.sans }}>{error}</div>
+                  )}
+                  <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                    <button
+                      onClick={cancelEdit}
+                      style={{
+                        padding: "8px 14px",
+                        borderRadius: 8,
+                        border: `1px solid ${T.line}`,
+                        background: "transparent",
+                        color: T.muted,
+                        fontSize: 12,
+                        fontWeight: 600,
+                        fontFamily: T.sans,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={saveEdit}
+                      disabled={!validEditKey || saving}
+                      style={{
+                        padding: "8px 14px",
+                        borderRadius: 8,
+                        border: "none",
+                        background: validEditKey ? T.accent : T.panelAlt,
+                        color: validEditKey ? "#fff" : T.dim,
+                        fontSize: 12,
+                        fontWeight: 700,
+                        fontFamily: T.sans,
+                        cursor: validEditKey && !saving ? "pointer" : "not-allowed",
+                        opacity: saving ? 0.7 : 1,
+                      }}
+                    >
+                      {saving ? "Saving…" : "Save"}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
-            <div style={{ display: "flex", gap: 6 }}>
-              <button
-                onClick={startReplace}
-                style={{
-                  padding: "9px 14px",
-                  borderRadius: 8,
-                  border: `1px solid ${T.line}`,
-                  background: "transparent",
-                  color: T.text,
-                  fontSize: 12,
-                  fontWeight: 600,
-                  fontFamily: T.sans,
-                  cursor: "pointer",
-                }}
-              >
-                Replace
-              </button>
-              <button
-                onClick={disconnect}
-                style={{
-                  padding: "9px 14px",
-                  borderRadius: 8,
-                  border: `1px solid ${T.accent}55`,
-                  background: T.accentSoft,
-                  color: T.accent,
-                  fontSize: 12,
-                  fontWeight: 700,
-                  fontFamily: T.sans,
-                  cursor: "pointer",
-                }}
-              >
-                Disconnect
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+          );
+        })}
+      </div>
 
-      {config && mode === "replace" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <div
-            style={{
-              fontSize: 11,
-              color: T.dim,
-              fontFamily: T.mono,
-              letterSpacing: 0.6,
-              textTransform: "uppercase",
-            }}
-          >
-            Replace credentials
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            {AI_PROVIDERS.map((pp) => (
-              <ProviderTile
-                key={pp.id}
-                provider={pp}
-                active={pp.id === editProvider}
-                onSelect={() => setEditProvider(pp.id)}
-              />
-            ))}
-          </div>
-          <div style={{ position: "relative" }}>
-            <input
-              type={revealed ? "text" : "password"}
-              value={editKey}
-              onChange={(e) => setEditKey(e.target.value)}
-              placeholder={editProviderObj.keyPrefix + "••••••••••••••••••••"}
-              autoComplete="off"
+      {activeProvider && status[activeProvider.id] && (
+        <div
+          style={{
+            marginTop: 14,
+            padding: "14px 16px",
+            background: T.panelAlt,
+            borderRadius: T.rMd,
+            border: `1px solid ${T.line}`,
+            display: "flex",
+            alignItems: "center",
+            gap: 14,
+            flexWrap: "wrap",
+          }}
+        >
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div
               style={{
-                width: "100%",
-                padding: "12px 64px 12px 16px",
-                borderRadius: T.rMd,
-                background: T.panelAlt,
-                border: `1px solid ${editKey && !validKey ? T.accent + "55" : T.line}`,
-                color: T.text,
-                fontSize: 13,
-                fontFamily: T.mono,
-                letterSpacing: 0.4,
-                outline: "none",
-              }}
-            />
-            <button
-              onClick={() => setRevealed((r) => !r)}
-              style={{
-                position: "absolute",
-                right: 10,
-                top: "50%",
-                transform: "translateY(-50%)",
-                padding: "5px 10px",
                 fontSize: 10,
+                color: T.dim,
                 fontFamily: T.mono,
-                fontWeight: 700,
-                letterSpacing: 0.5,
+                letterSpacing: 0.6,
                 textTransform: "uppercase",
-                background: "transparent",
-                border: `1px solid ${T.line}`,
-                borderRadius: 6,
-                cursor: "pointer",
-                color: T.muted,
               }}
             >
-              {revealed ? "hide" : "show"}
-            </button>
+              Active model · {activeProvider.name}
+            </div>
+            <div style={{ fontSize: 11, color: T.muted, fontFamily: T.sans, marginTop: 4, lineHeight: 1.4 }}>
+              Used for new conversations. Active threads keep their model.
+            </div>
           </div>
-          <div style={{ fontSize: 11, color: T.muted, fontFamily: T.sans, lineHeight: 1.5 }}>
-            {editProviderObj.keyHint} · Generate one at{" "}
-            <span style={{ color: T.accent, fontFamily: T.mono }}>{editProviderObj.docs}</span>
-          </div>
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <button
-              onClick={cancelReplace}
-              style={{
-                padding: "9px 16px",
-                borderRadius: 8,
-                border: `1px solid ${T.line}`,
-                background: "transparent",
-                color: T.muted,
-                fontSize: 12,
-                fontWeight: 600,
-                fontFamily: T.sans,
-                cursor: "pointer",
-              }}
-            >
-              Cancel
-            </button>
-            <button
-              onClick={saveReplace}
-              disabled={!validKey}
-              style={{
-                padding: "9px 16px",
-                borderRadius: 8,
-                border: "none",
-                background: validKey ? T.accent : T.panelAlt,
-                color: validKey ? "#fff" : T.dim,
-                fontSize: 12,
-                fontWeight: 700,
-                fontFamily: T.sans,
-                cursor: validKey ? "pointer" : "not-allowed",
-              }}
-            >
-              Save
-            </button>
-          </div>
+          <select
+            value={config?.model ?? activeProvider.defaultModel}
+            onChange={(e) => updateModel(e.target.value)}
+            style={{
+              background: T.panel,
+              border: `1px solid ${T.line}`,
+              color: T.text,
+              fontSize: 13,
+              fontFamily: T.mono,
+              padding: "8px 12px",
+              borderRadius: 8,
+              outline: "none",
+              cursor: "pointer",
+            }}
+          >
+            {activeProvider.models.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
         </div>
       )}
     </Card>
-  );
-}
-
-function ProviderTile({
-  provider,
-  active,
-  onSelect,
-}: {
-  provider: (typeof AI_PROVIDERS)[number];
-  active: boolean;
-  onSelect?: () => void;
-}) {
-  const T = useTheme();
-  const interactive = !!onSelect;
-  return (
-    <button
-      onClick={onSelect}
-      disabled={!interactive}
-      style={{
-        padding: "16px 18px",
-        borderRadius: T.rMd,
-        cursor: interactive ? "pointer" : "default",
-        textAlign: "left",
-        background: active ? T.panelAlt : "transparent",
-        border: `1px solid ${active ? T.accent + "55" : T.line}`,
-        transition: "all .15s ease",
-        display: "flex",
-        flexDirection: "column",
-        gap: 10,
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <div
-          style={{
-            width: 28,
-            height: 28,
-            borderRadius: 8,
-            background: provider.color,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: 13,
-            fontWeight: 800,
-            color: "#fff",
-            fontFamily: T.sans,
-          }}
-        >
-          {provider.name.charAt(0)}
-        </div>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 13.5, fontWeight: 700, color: T.text, fontFamily: T.sans }}>
-            {provider.name}
-          </div>
-          <div style={{ fontSize: 10, color: T.dim, fontFamily: T.mono }}>by {provider.by}</div>
-        </div>
-        {active && interactive && (
-          <span
-            style={{
-              width: 16,
-              height: 16,
-              borderRadius: 8,
-              background: T.accent,
-              color: "#fff",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: 9,
-              fontWeight: 800,
-            }}
-          >
-            ✓
-          </span>
-        )}
-      </div>
-      <div style={{ fontSize: 10.5, color: T.muted, fontFamily: T.mono }}>
-        default · {provider.defaultModel}
-      </div>
-    </button>
   );
 }

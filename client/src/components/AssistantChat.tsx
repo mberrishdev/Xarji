@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTheme, type InkTheme } from "../ink/theme";
 import { LiveDot } from "../ink/primitives";
-import { getProvider, type AIConfig } from "../lib/aiConfig";
+import { deleteProviderKey, getProvider, type AIConfig } from "../lib/aiConfig";
 import {
   createThread,
   deleteThread,
@@ -559,11 +559,16 @@ export function AssistantChat({ config, onClear }: { config: AIConfig; onClear: 
                 }}
               >
                 <button
-                  onClick={() => {
+                  onClick={async () => {
                     setMenuOpen(false);
-                    if (window.confirm("Disconnect AI? Your key will be removed from this device.")) {
-                      onClear();
+                    if (!window.confirm(`Disconnect ${provider.name}? The key will be removed from this Mac.`)) return;
+                    try {
+                      await deleteProviderKey(config.provider);
+                    } catch (err) {
+                      window.alert(err instanceof Error ? err.message : String(err));
+                      return;
                     }
+                    onClear();
                   }}
                   style={{
                     width: "100%",

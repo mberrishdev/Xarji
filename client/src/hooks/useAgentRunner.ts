@@ -121,7 +121,7 @@ export function useAgentRunner() {
       emit: (event: AssistantEvent) => void,
       signal?: AbortSignal
     ): Promise<void> => {
-      const provider = await getProviderClient(config.provider, config.apiKey);
+      const provider = getProviderClient(config.provider);
       await runAgent({
         provider,
         model: config.model,

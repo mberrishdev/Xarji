@@ -1,25 +1,20 @@
-// OpenAI provider — Chat Completions streaming. Tool calls arrive as
-// indexed deltas; we accumulate by index and emit a single tool-call
-// event per call once the stream completes for that index.
+// OpenAI provider — runs inside xarji-core, same shape as the Anthropic
+// counterpart. Browser sends the generic AIStreamRequest; this module
+// hits api.openai.com using the key from ~/.xarji/config.json.
 
 import OpenAI from "openai";
 import type {
   AICoreMessage,
-  AIProviderClient,
-  AIStreamEvent,
-  AIStreamOpts,
+  AIProvider,
   AIStopReason,
-} from "../types";
+  AIStreamEvent,
+} from "./types";
 
-export function makeOpenAIProvider(apiKey: string): AIProviderClient {
-  const client = new OpenAI({
-    apiKey,
-    dangerouslyAllowBrowser: true,
-  });
-
+export function makeOpenAIProvider(): AIProvider {
   return {
     id: "openai",
-    async *stream(opts: AIStreamOpts): AsyncIterable<AIStreamEvent> {
+    async *stream(opts): AsyncIterable<AIStreamEvent> {
+      const client = new OpenAI({ apiKey: opts.apiKey });
       const messages = toOpenAIMessages(opts.systemPrompt, opts.messages);
       const tools = opts.tools.map((t) => ({
         type: "function" as const,
@@ -45,7 +40,7 @@ export function makeOpenAIProvider(apiKey: string): AIProviderClient {
           stream: true,
         });
       } catch (err) {
-        yield { kind: "error", error: err };
+        yield { kind: "error", error: err instanceof Error ? err.message : String(err) };
         return;
       }
 
@@ -87,12 +82,10 @@ export function makeOpenAIProvider(apiKey: string): AIProviderClient {
           }
         }
       } catch (err) {
-        yield { kind: "error", error: err };
+        yield { kind: "error", error: err instanceof Error ? err.message : String(err) };
         return;
       }
 
-      // Emit collected tool calls before the stop event so the
-      // orchestrator can dispatch them in order.
       for (const buf of [...toolBuffers.values()]) {
         let input: unknown;
         try {
@@ -121,8 +114,6 @@ function toOpenAIMessages(
         out.push({ role: "user", content: m.content });
         continue;
       }
-      // Tool results need to be split out into separate `tool` role messages
-      // (Chat Completions doesn't allow them inline in a user turn).
       const userText: string[] = [];
       const toolMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
       for (const p of m.content) {

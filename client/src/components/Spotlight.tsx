@@ -11,7 +11,9 @@ import {
   loadAIConfig,
   onAIConfigChange,
   type AIConfig,
+  type AIProviderId,
 } from "../lib/aiConfig";
+import { useAIKeyStatus } from "../hooks/useAIKeyStatus";
 import { createThread, deriveTitle } from "../lib/aiThreads";
 
 interface RouteEntry {
@@ -81,6 +83,11 @@ function Spotlight({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [q, setQ] = useState("");
   const [sel, setSel] = useState(0);
   const [config, setConfig] = useState<AIConfig | null>(loadAIConfig);
+  const { status: keyStatus } = useAIKeyStatus();
+  // "AI is connected" now means the service has a key for SOME
+  // provider, not that the local AIConfig has an apiKey field — the
+  // browser doesn't see keys at all anymore.
+  const hasAnyKey = keyStatus.anthropic || keyStatus.openai;
 
   useEffect(() => onAIConfigChange(() => setConfig(loadAIConfig())), []);
 
@@ -127,7 +134,9 @@ function Spotlight({ open, onClose }: { open: boolean; onClose: () => void }) {
     }
     if (item.kind === "ai-suggestion" || item.kind === "ask") {
       const prompt = item.kind === "ask" ? item.label : item.prompt;
-      if (!config) {
+      if (!hasAnyKey) {
+        // No provider key on the service yet — land them on the
+        // assistant page, which will render the onboarding gate.
         navigate("/assistant");
         onClose();
         return;
@@ -162,7 +171,18 @@ function Spotlight({ open, onClose }: { open: boolean; onClose: () => void }) {
 
   if (!open) return null;
 
-  const providerName = config && AI_PROVIDERS.find((p) => p.id === config.provider)?.name;
+  // Display the active provider name when (a) the user has a local
+  // pref + (b) that provider has a key on the service. Otherwise pick
+  // any connected provider so the footer doesn't say "no AI key" when
+  // one is actually configured.
+  const activeProviderId: AIProviderId | null = config?.provider && keyStatus[config.provider]
+    ? config.provider
+    : keyStatus.anthropic
+      ? "anthropic"
+      : keyStatus.openai
+        ? "openai"
+        : null;
+  const providerName = activeProviderId ? AI_PROVIDERS.find((p) => p.id === activeProviderId)?.name : null;
 
   return (
     <div
@@ -238,7 +258,7 @@ function Spotlight({ open, onClose }: { open: boolean; onClose: () => void }) {
         </div>
 
         <div style={{ maxHeight: "min(60vh, 460px)", overflowY: "auto", padding: "8px 8px 14px" }}>
-          {!config && trimmed && (
+          {!hasAnyKey && trimmed && (
             <div
               style={{
                 padding: "10px 14px",
@@ -360,8 +380,8 @@ function Spotlight({ open, onClose }: { open: boolean; onClose: () => void }) {
         >
           <span>↑↓ navigate · ↵ run · esc close</span>
           <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <LiveDot color={config ? T.green : T.dim} />
-            {config ? `${providerName} connected` : "no AI key"}
+            <LiveDot color={hasAnyKey ? T.green : T.dim} />
+            {hasAnyKey ? `${providerName} connected` : "no AI key"}
           </span>
         </div>
       </div>
