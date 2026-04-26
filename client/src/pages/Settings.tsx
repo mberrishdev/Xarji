@@ -17,6 +17,20 @@ export function Settings() {
   const { credits } = useCredits();
 
   const [confirm, setConfirm] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [lastSyncCount, setLastSyncCount] = useState<number | null>(null);
+
+  const handleSync = async () => {
+    setSyncing(true);
+    setLastSyncCount(null);
+    try {
+      const res = await fetch("/api/sync", { method: "POST" });
+      const body = await res.json() as { synced: number };
+      setLastSyncCount(body.synced);
+    } finally {
+      setSyncing(false);
+    }
+  };
   const [newSenderId, setNewSenderId] = useState("");
   const [newSenderName, setNewSenderName] = useState("");
 
@@ -284,6 +298,29 @@ export function Settings() {
                 <div style={{ fontSize: 10, color: T.dim, marginTop: 4, fontFamily: T.sans }}>{d.hint}</div>
               </div>
             ))}
+          </div>
+          <div style={{ marginTop: 14 }}>
+            <Row label="Sync now" hint={lastSyncCount !== null ? `Last sync: ${lastSyncCount} new transaction${lastSyncCount === 1 ? "" : "s"}` : "Re-read chat.db and push any new messages"}>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={syncing ? undefined : handleSync}
+                style={{
+                  padding: "9px 16px",
+                  borderRadius: 10,
+                  border: `1px solid ${T.line}`,
+                  background: T.panelAlt,
+                  color: syncing ? T.muted : T.text,
+                  fontSize: 12.5,
+                  fontWeight: 600,
+                  fontFamily: T.sans,
+                  cursor: syncing ? "default" : "pointer",
+                  opacity: syncing ? 0.7 : 1,
+                }}
+              >
+                {syncing ? "Syncing…" : "Sync"}
+              </button>
+            </Row>
           </div>
         </Section>
 

@@ -316,6 +316,11 @@ export function startHttpServer(opts: HttpServerOptions): HttpServerHandle {
         }
         return json(result);
       }
+      if (path === "/api/sync" && req.method === "POST") {
+        if (!opts.service) return json({ error: "Service not running" }, { status: 503 });
+        const count = await opts.service.processNewMessages();
+        return json({ synced: count });
+      }
       if (path === "/api/exchange-rate" && req.method === "GET") {
         const dateParam = url.searchParams.get("date");
         const langParam = url.searchParams.get("lang");
