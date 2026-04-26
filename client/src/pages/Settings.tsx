@@ -17,6 +17,56 @@ export function Settings() {
   const { credits } = useCredits();
 
   const [confirm, setConfirm] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  // `null` before the first sync; otherwise the last result. Failures are
+  // an array of `{ target, error }` so the hint can show "instantdb: …"
+  // instead of just a count that overstates how much actually landed.
+  type SyncResultState =
+    | { kind: "ok"; synced: number }
+    | { kind: "partial"; synced: number; failures: Array<{ target: string; error: string }> }
+    | { kind: "error"; message: string };
+  const [lastSync, setLastSync] = useState<SyncResultState | null>(null);
+
+  const handleSync = async () => {
+    setSyncing(true);
+    setLastSync(null);
+    try {
+      const res = await fetch("/api/sync", { method: "POST" });
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        setLastSync({ kind: "error", message: text || `HTTP ${res.status}` });
+        return;
+      }
+      const body = (await res.json()) as { synced: number; failures?: Array<{ target: string; error: string }> };
+      const failures = body.failures || [];
+      if (failures.length > 0) {
+        setLastSync({ kind: "partial", synced: body.synced, failures });
+      } else {
+        setLastSync({ kind: "ok", synced: body.synced });
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setLastSync({ kind: "error", message });
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const syncHint = (() => {
+    if (lastSync === null) return "Re-read chat.db and push any new messages";
+    if (lastSync.kind === "ok") {
+      return `Last sync: ${lastSync.synced} new transaction${lastSync.synced === 1 ? "" : "s"}`;
+    }
+    if (lastSync.kind === "error") {
+      return `Sync failed: ${lastSync.message}`;
+    }
+    // partial — show which target(s) failed so the user understands why
+    // the sync count may not reflect what's actually in their dashboard.
+    const failedTargets = lastSync.failures.map((f) => f.target).join(", ");
+    return `Synced ${lastSync.synced}, ${lastSync.failures.length} target${
+      lastSync.failures.length === 1 ? "" : "s"
+    } failed (${failedTargets}). Will retry on next sync.`;
+  })();
   const [newSenderId, setNewSenderId] = useState("");
   const [newSenderName, setNewSenderName] = useState("");
 
@@ -284,6 +334,29 @@ export function Settings() {
                 <div style={{ fontSize: 10, color: T.dim, marginTop: 4, fontFamily: T.sans }}>{d.hint}</div>
               </div>
             ))}
+          </div>
+          <div style={{ marginTop: 14 }}>
+            <Row label="Sync now" hint={syncHint}>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={syncing ? undefined : handleSync}
+                style={{
+                  padding: "9px 16px",
+                  borderRadius: 10,
+                  border: `1px solid ${T.line}`,
+                  background: T.panelAlt,
+                  color: syncing ? T.muted : T.text,
+                  fontSize: 12.5,
+                  fontWeight: 600,
+                  fontFamily: T.sans,
+                  cursor: syncing ? "default" : "pointer",
+                  opacity: syncing ? 0.7 : 1,
+                }}
+              >
+                {syncing ? "Syncing…" : "Sync"}
+              </button>
+            </Row>
           </div>
         </Section>
 
