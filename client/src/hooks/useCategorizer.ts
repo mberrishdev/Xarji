@@ -16,6 +16,7 @@ import {
   type InkCategory,
 } from "../lib/utils";
 import { useMerchantOverrides } from "./useMerchantOverrides";
+import { useCategories } from "./useCategories";
 
 export interface Categorizer {
   /** Returns the category id (e.g. "groceries") for a merchant. */
@@ -25,34 +26,69 @@ export interface Categorizer {
   /** Convenience for places that historically called `autoCategorize`
    *  to get the human-facing category name (e.g. "Groceries"). */
   categorizeName: (merchant: string | null | undefined) => string;
+  /** Merged list of DEFAULT_CATEGORIES + DB-backed categories (DB wins
+   *  on id collision so a renamed default uses the user's name).
+   *  Use this anywhere you'd previously have hardcoded `DEFAULT_CATEGORIES`
+   *  — pickers, dropdowns, lookup-by-id calls — so user-created
+   *  categories show up consistently. */
+  allCategories: InkCategory[];
 }
 
 export function useCategorizer(): Categorizer {
   const { byMerchant } = useMerchantOverrides();
+  const { categories: dbCategories } = useCategories();
+
+  // DB categories override defaults on id collision so a user-renamed
+  // "Groceries" → "Food shop" propagates everywhere. New custom
+  // categories (those with ids not in DEFAULT_CATEGORIES) get appended.
+  // Order: defaults first (predictable for the regex categoriser's
+  // fallback), then any custom categories the user created.
+  const allCategories = useMemo<InkCategory[]>(() => {
+    const byId = new Map<string, InkCategory>();
+    for (const c of DEFAULT_CATEGORIES) byId.set(c.id, c);
+    for (const c of dbCategories) {
+      byId.set(c.id, { id: c.id, name: c.name, color: c.color, icon: c.icon });
+    }
+    return Array.from(byId.values());
+  }, [dbCategories]);
 
   const getCategory = useCallback(
     (merchant: string | null | undefined, raw?: string | null): InkCategory => {
       if (merchant) {
         const override = byMerchant.get(merchant.trim().toLowerCase());
         if (override) {
-          const hit = DEFAULT_CATEGORIES.find((c) => c.id === override.categoryId);
+          const hit = allCategories.find((c) => c.id === override.categoryId);
           if (hit) return hit;
+          // Override points at a category that no longer exists (deleted
+          // or never created). Fall through to the regex categoriser
+          // rather than returning a broken record. The dangling override
+          // should be cleaned up by the delete-category code path; we
+          // don't want this hot path silently fixing data.
         }
       }
-      return defaultGetCategory(merchant, raw);
+      // Resolve the regex result against the merged category list so a
+      // renamed default (e.g. "Subscriptions" → "Recurring") propagates.
+      // Falls back to defaultGetCategory if the merged lookup fails so
+      // we never return undefined.
+      const id = categorizeId(merchant, raw);
+      return allCategories.find((c) => c.id === id) ?? defaultGetCategory(merchant, raw);
     },
-    [byMerchant]
+    [byMerchant, allCategories]
   );
 
   const categorize = useCallback(
     (merchant: string | null | undefined, raw?: string | null): string => {
       if (merchant) {
         const override = byMerchant.get(merchant.trim().toLowerCase());
-        if (override) return override.categoryId;
+        // Only honour an override if the target still exists. Dangling
+        // overrides re-route to the regex result.
+        if (override && allCategories.some((c) => c.id === override.categoryId)) {
+          return override.categoryId;
+        }
       }
       return categorizeId(merchant, raw);
     },
-    [byMerchant]
+    [byMerchant, allCategories]
   );
 
   const categorizeName = useCallback(
@@ -60,5 +96,8 @@ export function useCategorizer(): Categorizer {
     [getCategory]
   );
 
-  return useMemo(() => ({ categorize, getCategory, categorizeName }), [categorize, getCategory, categorizeName]);
+  return useMemo(
+    () => ({ categorize, getCategory, categorizeName, allCategories }),
+    [categorize, getCategory, categorizeName, allCategories]
+  );
 }

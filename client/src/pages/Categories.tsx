@@ -6,7 +6,7 @@ import { AreaChart, Donut, HBar } from "../ink/charts";
 import { TxRow, type InkTx } from "../ink/TxRow";
 import { useConvertedPayments } from "../hooks/useTransactions";
 import { useMonthlyTrend } from "../hooks/useMonthlyTrend";
-import { DEFAULT_CATEGORIES, type InkCategory } from "../lib/utils";
+import { type InkCategory } from "../lib/utils";
 import { useCategorizer } from "../hooks/useCategorizer";
 import { useRangeState } from "../hooks/useRangeState";
 import { isInRange, rangeToDateParams } from "../lib/dateRange";
@@ -27,7 +27,7 @@ export function Categories() {
   const now = new Date();
 
   const { payments } = useConvertedPayments();
-  const { getCategory, categorize: categorizeId } = useCategorizer();
+  const { getCategory, categorize: categorizeId, allCategories } = useCategorizer();
   const trend = useMonthlyTrend(6);
   const { range, props: rangeProps } = useRangeState("Month");
 
@@ -61,13 +61,13 @@ export function Categories() {
   }, [cats, selected]);
 
   const selectedId = selected || cats[0]?.cat;
-  const selCat = DEFAULT_CATEGORIES.find((c) => c.id === selectedId);
+  const selCat = allCategories.find((c) => c.id === selectedId);
   const selData = cats.find((c) => c.cat === selectedId);
 
   const catTrend = useMemo(() => {
     const keys = trend.map((m) => m.key);
     const perCat: Record<string, { key: string; value: number }[]> = {};
-    for (const c of DEFAULT_CATEGORIES) {
+    for (const c of allCategories) {
       perCat[c.id] = keys.map((k) => ({ key: k, value: 0 }));
     }
     for (const p of payments) {
@@ -79,7 +79,7 @@ export function Categories() {
       if (perCat[catId]) perCat[catId][idx].value += p.gelAmount;
     }
     return { keys, perCat, labels: trend.map((m) => m.label.slice(0, 3)) };
-  }, [payments, trend]);
+  }, [payments, trend, allCategories, categorizeId]);
 
   const selMerchants = useMemo(() => {
     const map: Record<string, { merchant: string; total: number; count: number }> = {};

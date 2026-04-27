@@ -7,8 +7,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useTheme, type InkTheme } from "../ink/theme";
-import { DEFAULT_CATEGORIES, type InkCategory } from "../lib/utils";
+import { type InkCategory } from "../lib/utils";
 import { useMerchantOverrides } from "../hooks/useMerchantOverrides";
+import { useCategorizer } from "../hooks/useCategorizer";
 
 export function CategoryPicker({
   merchant,
@@ -22,6 +23,7 @@ export function CategoryPicker({
   const T = useTheme();
   const ref = useRef<HTMLDivElement | null>(null);
   const { byMerchant, setOverride, clearOverride } = useMerchantOverrides();
+  const { allCategories } = useCategorizer();
   const [busy, setBusy] = useState(false);
   const hasOverride = !!byMerchant.get(merchant.trim().toLowerCase());
 
@@ -94,7 +96,7 @@ export function CategoryPicker({
         Move {merchant} to
       </div>
       <div style={{ display: "flex", flexDirection: "column", maxHeight: 280, overflowY: "auto" }}>
-        {DEFAULT_CATEGORIES.map((cat) => (
+        {allCategories.map((cat) => (
           <CategoryRow
             key={cat.id}
             T={T}

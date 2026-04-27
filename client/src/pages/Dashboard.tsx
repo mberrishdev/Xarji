@@ -11,7 +11,7 @@ import { useCredits, useRangeCredits } from "../hooks/useCredits";
 import { useRangeState } from "../hooks/useRangeState";
 import { previousRange, rangeToDateParams } from "../lib/dateRange";
 import { formatCompact, formatLocalDay } from "../ink/format";
-import { DEFAULT_CATEGORIES } from "../lib/utils";
+import { type InkCategory } from "../lib/utils";
 import { useCategorizer } from "../hooks/useCategorizer";
 import { isWithinInterval, endOfMonth, differenceInCalendarDays } from "date-fns";
 
@@ -54,7 +54,7 @@ export function Dashboard() {
   // isWithinInterval the aggregator hooks use so the donut total
   // always reconciles with stats.total.
   const byCategory = useMemo(() => {
-    const map: Record<string, { total: number; count: number; meta: typeof DEFAULT_CATEGORIES[number] }> = {};
+    const map: Record<string, { total: number; count: number; meta: InkCategory }> = {};
     for (const p of payments) {
       if (p.gelAmount === null) continue;
       if (!isWithinInterval(new Date(p.transactionDate), { start: range.start, end: range.end })) continue;
