@@ -151,7 +151,15 @@ export function AssistantChat({ config, onClear }: { config: AIConfig; onClear: 
    * text content (the user-visible answer). User turns become the raw
    * text of the prompt they typed. The new turn the user just sent is
    * already in `thread.messages` by the time this runs.
+   *
+   * History is capped at the last `MAX_HISTORY_TURNS` core messages.
+   * Cheap insurance against unbounded growth — without a cap, a
+   * long-lived thread eventually exceeds the provider's context window
+   * and every follow-up returns 400. Token-aware budgeting would be
+   * the principled fix; this is the 80% solution that buys time for
+   * a real fix without shipping a known unbounded path.
    */
+  const MAX_HISTORY_TURNS = 30;
   const buildCoreHistory = (thread: AIThread): AICoreMessage[] => {
     const out: AICoreMessage[] = [];
     for (const m of thread.messages) {
@@ -166,6 +174,13 @@ export function AssistantChat({ config, onClear }: { config: AIConfig; onClear: 
       } else {
         out.push({ role: "assistant", content: [{ type: "text", text }] });
       }
+    }
+    // Drop oldest turns when over the cap. Keep the most recent — they
+    // carry the active conversational state, while older ones are
+    // increasingly stale and unlikely to be referenced by the user's
+    // current question.
+    if (out.length > MAX_HISTORY_TURNS) {
+      return out.slice(out.length - MAX_HISTORY_TURNS);
     }
     return out;
   };
