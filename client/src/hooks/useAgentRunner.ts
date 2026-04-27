@@ -12,6 +12,7 @@ import { getProviderClient } from "../lib/ai/provider";
 import { runAgent, type AssistantEvent } from "../lib/ai/orchestrator";
 import { READONLY_TOOLS } from "../lib/ai/tools/readonly";
 import type { AITool } from "../lib/ai/tools/types";
+import type { AICoreMessage } from "../lib/ai/types";
 import type { AIConfig } from "../lib/aiConfig";
 
 // Tool registries the agent has access to. Adding a tool to one of
@@ -119,7 +120,7 @@ export function useAgentRunner() {
   return useCallback(
     async (
       config: AIConfig,
-      userPrompt: string,
+      messages: AICoreMessage[],
       emit: (event: AssistantEvent) => void,
       signal?: AbortSignal
     ): Promise<void> => {
@@ -128,7 +129,7 @@ export function useAgentRunner() {
         provider,
         model: config.model,
         systemPrompt: buildSystemPrompt(ALL_TOOLS),
-        userPrompt,
+        messages,
         tools: ALL_TOOLS,
         toolContext: {
           payments,

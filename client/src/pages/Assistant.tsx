@@ -63,16 +63,35 @@ export function Assistant() {
     );
   }
 
+  // The chat is the only page in the app whose content fits a viewport
+  // exactly: the message scroller needs its own bounded height so it
+  // overflows internally instead of pushing the input row off-screen.
+  // Wrap it here (scoped to /assistant) so the global Layout shell
+  // stays simple — every other page scrolls the document the way it
+  // always did.
   return (
-    <AssistantChat
-      config={effectiveConfig}
-      onClear={() => {
-        // Disconnect = clear the local provider/model preference. The
-        // actual key lives on the service and is removed via
-        // SettingsAISection / AssistantChat's "Disconnect" path.
-        setStoredConfig(null);
-        refresh();
+    <div
+      style={{
+        flex: 1,
+        display: "flex",
+        flexDirection: "column",
+        minHeight: 0,
+        // 100vh minus the main padding (28px top + 28px bottom) so the
+        // chat's input row stays anchored above the viewport bottom
+        // instead of being pushed below by the surrounding shell.
+        height: "calc(100vh - 56px)",
       }}
-    />
+    >
+      <AssistantChat
+        config={effectiveConfig}
+        onClear={() => {
+          // Disconnect = clear the local provider/model preference. The
+          // actual key lives on the service and is removed via
+          // SettingsAISection / AssistantChat's "Disconnect" path.
+          setStoredConfig(null);
+          refresh();
+        }}
+      />
+    </div>
   );
 }
