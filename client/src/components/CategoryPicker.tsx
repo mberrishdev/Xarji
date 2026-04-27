@@ -17,10 +17,17 @@ export function CategoryPicker({
   merchant,
   current,
   onClose,
+  anchor = "left",
 }: {
   merchant: string;
   current: InkCategory;
   onClose: () => void;
+  /** Which side of the trigger the picker aligns to. "left" (default)
+   *  matches the inline use on TxRow's category badge; "right" is for
+   *  the Transactions detail panel where the trigger is on the right
+   *  edge of a narrow column and a left-anchored picker would clip
+   *  off-screen. */
+  anchor?: "left" | "right";
 }) {
   const T = useTheme();
   const ref = useRef<HTMLDivElement | null>(null);
@@ -137,7 +144,7 @@ export function CategoryPicker({
       style={{
         position: "absolute",
         top: "calc(100% + 6px)",
-        left: 0,
+        ...(anchor === "right" ? { right: 0 } : { left: 0 }),
         zIndex: 100,
         minWidth: 260,
         background: T.panel,

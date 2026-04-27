@@ -471,13 +471,12 @@ function CategoryDetailRow({
         </button>
       </div>
       {open && canEdit && (
-        <div style={{ position: "absolute", right: 0, top: "100%", zIndex: 50 }}>
-          <CategoryPicker
-            merchant={pickerMerchant}
-            current={cat}
-            onClose={() => setOpen(false)}
-          />
-        </div>
+        <CategoryPicker
+          merchant={pickerMerchant}
+          current={cat}
+          onClose={() => setOpen(false)}
+          anchor="right"
+        />
       )}
     </div>
   );
