@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { db, type Category } from "../lib/instant";
 import { DEFAULT_CATEGORIES } from "../lib/utils";
 import { useCategorizer } from "./useCategorizer";
+import { useMerchantOverrides } from "./useMerchantOverrides";
 import { id } from "@instantdb/react";
 
 export function useCategories() {
@@ -15,6 +16,14 @@ export function useCategories() {
 }
 
 export function useCategoryActions() {
+  // Read overrides synchronously so deleteCategory can clean up any
+  // dangling rows in the same transact call. Without this, deleting
+  // "Coffee shops" leaves merchantCategoryOverrides rows pointing at
+  // a category id that no longer exists; the categorizer falls
+  // through to the regex result on dangling lookups (defensive), but
+  // the data still rots silently.
+  const { overrides } = useMerchantOverrides();
+
   const addCategory = async (category: Omit<Category, "id">) => {
     const categoryId = id();
     await db.transact(
@@ -30,9 +39,17 @@ export function useCategoryActions() {
   };
 
   const deleteCategory = async (categoryId: string) => {
-    await db.transact(
-      db.tx.categories[categoryId].delete()
-    );
+    // Build the op list as `unknown[]` because db.tx returns a chainable
+    // proxy whose op type isn't readily exposed by @instantdb/react. The
+    // demo-db typings accept any[] anyway and the real InstantDB client
+    // is typed against the same shape.
+    const ops: unknown[] = [db.tx.categories[categoryId].delete()];
+    for (const o of overrides) {
+      if (o.categoryId === categoryId) {
+        ops.push(db.tx.merchantCategoryOverrides[o.id].delete());
+      }
+    }
+    await db.transact(ops as Parameters<typeof db.transact>[0]);
   };
 
   const initializeDefaultCategories = async () => {

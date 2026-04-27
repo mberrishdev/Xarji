@@ -6,8 +6,9 @@ import { AreaChart, Donut, HBar } from "../ink/charts";
 import { TxRow, type InkTx } from "../ink/TxRow";
 import { useConvertedPayments } from "../hooks/useTransactions";
 import { useMonthlyTrend } from "../hooks/useMonthlyTrend";
-import { DEFAULT_CATEGORIES, type InkCategory } from "../lib/utils";
+import { type InkCategory } from "../lib/utils";
 import { useCategorizer } from "../hooks/useCategorizer";
+import { useCategories, useCategoryActions } from "../hooks/useCategories";
 import { useRangeState } from "../hooks/useRangeState";
 import { isInRange, rangeToDateParams } from "../lib/dateRange";
 import { formatCompact, formatLocalDay, monthKey } from "../ink/format";
@@ -27,9 +28,37 @@ export function Categories() {
   const now = new Date();
 
   const { payments } = useConvertedPayments();
-  const { getCategory, categorize: categorizeId } = useCategorizer();
+  const { getCategory, categorize: categorizeId, allCategories } = useCategorizer();
+  const { categories: dbCategories } = useCategories();
+  const { deleteCategory } = useCategoryActions();
   const trend = useMonthlyTrend(6);
   const { range, props: rangeProps } = useRangeState("Month");
+
+  // A category row is deletable when there's a DB row with isDefault: false.
+  // Hard-coded DEFAULT_CATEGORIES that haven't been seeded into the DB
+  // are never deletable (they'd just re-appear from the regex
+  // categoriser's id list). Default-bucket categories (from
+  // initializeDefaultCategories) are likewise not deletable to preserve
+  // the spending mix invariant.
+  const deletableIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const c of dbCategories) {
+      if (!c.isDefault) set.add(c.id);
+    }
+    return set;
+  }, [dbCategories]);
+
+  const handleDelete = async (catId: string, catName: string) => {
+    const txCount = payments.filter(
+      (p) => p.gelAmount !== null && categorizeId(p.merchant, p.rawMessage) === catId
+    ).length;
+    const message = txCount === 0
+      ? `Delete "${catName}"? This category has no transactions assigned to it.`
+      : `Delete "${catName}"? ${txCount} transaction${txCount === 1 ? "" : "s"} currently categorise here and will fall back to the auto category. Any merchant-overrides pointing at this category will be removed.`;
+    if (!window.confirm(message)) return;
+    if (selected === catId) setSelected(null);
+    await deleteCategory(catId);
+  };
 
   const monthPayments = useMemo(
     () => payments.filter((p) => isInRange(p.transactionDate, range)),
@@ -61,13 +90,13 @@ export function Categories() {
   }, [cats, selected]);
 
   const selectedId = selected || cats[0]?.cat;
-  const selCat = DEFAULT_CATEGORIES.find((c) => c.id === selectedId);
+  const selCat = allCategories.find((c) => c.id === selectedId);
   const selData = cats.find((c) => c.cat === selectedId);
 
   const catTrend = useMemo(() => {
     const keys = trend.map((m) => m.key);
     const perCat: Record<string, { key: string; value: number }[]> = {};
-    for (const c of DEFAULT_CATEGORIES) {
+    for (const c of allCategories) {
       perCat[c.id] = keys.map((k) => ({ key: k, value: 0 }));
     }
     for (const p of payments) {
@@ -79,7 +108,7 @@ export function Categories() {
       if (perCat[catId]) perCat[catId][idx].value += p.gelAmount;
     }
     return { keys, perCat, labels: trend.map((m) => m.label.slice(0, 3)) };
-  }, [payments, trend]);
+  }, [payments, trend, allCategories, categorizeId]);
 
   const selMerchants = useMemo(() => {
     const map: Record<string, { merchant: string; total: number; count: number }> = {};
@@ -159,20 +188,20 @@ export function Categories() {
             {cats.map((c) => {
               const pct = (c.total / total) * 100;
               const active = c.cat === selectedId;
+              const deletable = deletableIds.has(c.cat);
               return (
-                <button
+                <div
                   key={c.cat}
+                  className="category-row"
                   onClick={() => setSelected(c.cat)}
                   style={{
                     display: "flex",
                     alignItems: "center",
                     gap: 10,
                     padding: "10px 12px",
-                    border: "none",
                     cursor: "pointer",
                     borderRadius: 10,
                     background: active ? T.panelAlt : "transparent",
-                    textAlign: "left",
                   }}
                 >
                   <span style={{ width: 8, height: 8, borderRadius: 4, background: c.meta.color }} />
@@ -195,7 +224,34 @@ export function Categories() {
                   >
                     ₾{Math.round(c.total)}
                   </span>
-                </button>
+                  {deletable && (
+                    <button
+                      type="button"
+                      title={`Delete "${c.meta.name}"`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDelete(c.cat, c.meta.name);
+                      }}
+                      style={{
+                        width: 22,
+                        height: 22,
+                        borderRadius: 11,
+                        border: `1px solid ${T.line}`,
+                        background: "transparent",
+                        color: T.dim,
+                        fontSize: 12,
+                        lineHeight: 1,
+                        cursor: "pointer",
+                        flexShrink: 0,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
               );
             })}
           </div>

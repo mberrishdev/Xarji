@@ -2,7 +2,7 @@
 // etc.) into the provider-agnostic orchestrator. Returns a `runAgent`
 // function the AssistantChat calls per user prompt.
 
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 import { useConvertedPayments, useFailedPayments } from "./useTransactions";
 import { useConvertedCredits } from "./useCredits";
 import { useCategories } from "./useCategories";
@@ -11,16 +11,18 @@ import { useCategorizer } from "./useCategorizer";
 import { getProviderClient } from "../lib/ai/provider";
 import { runAgent, type AssistantEvent } from "../lib/ai/orchestrator";
 import { READONLY_TOOLS } from "../lib/ai/tools/readonly";
+import { WRITE_TOOLS } from "../lib/ai/tools/write";
 import type { AITool } from "../lib/ai/tools/types";
 import type { AICoreMessage } from "../lib/ai/types";
 import type { AIConfig } from "../lib/aiConfig";
+import { useMerchantOverrides } from "./useMerchantOverrides";
 
 // Tool registries the agent has access to. Adding a tool to one of
 // these lists automatically (a) makes it callable by the model and
 // (b) appends it to the "Available tools" section of the system
 // prompt — see buildSystemPrompt() below. Adding a NEW registry?
 // Concatenate it into ALL_TOOLS so both effects happen.
-const ALL_TOOLS: AITool[] = [...READONLY_TOOLS];
+const ALL_TOOLS: AITool[] = [...READONLY_TOOLS, ...WRITE_TOOLS];
 
 const BASE_SYSTEM_PROMPT = `You are Xarji's AI Assistant, a personal finance assistant embedded inside the Xarji dashboard.
 
@@ -48,7 +50,16 @@ Tool usage:
 - Do not guess specific financial numbers from memory.
 - Do not invent transactions, merchants, totals, dates, categories, or exchange rates.
 - For purely conversational, educational, or general budgeting questions, a tool call is not required.
-- Tools are read-only. Do not claim that you changed, deleted, categorized, edited, or created anything.
+
+Write tools:
+- Some tools mutate the user's data: \`create_category\` and \`apply_category_override\`.
+- Both AUTO-APPLY: they execute immediately when called, no confirmation step in chat.
+- After a successful write, you may tell the user it's done — describe what was created or moved.
+- If a write tool fails, the error result tells you why. Use that to inform the user clearly.
+- The user can edit a category, delete a category, or clear an override directly from the dashboard UI:
+  - Delete a category: open Categories (\`/categories\`), click the × on the category row.
+  - Clear a merchant override: open Transactions (\`/transactions\`), click the merchant's category badge, then "Clear override".
+- For deletions or edits that don't have a tool, tell the user how to do it in the UI.
 
 Answer style:
 - Be concise and clear.
@@ -115,7 +126,18 @@ export function useAgentRunner() {
   const { failedPayments } = useFailedPayments();
   const { categories } = useCategories();
   const { senders } = useBankSenders();
-  const { categorizeName } = useCategorizer();
+  const { categorizeName, allCategories } = useCategorizer();
+  const { overrides } = useMerchantOverrides();
+
+  // Ref-based snapshot of live state. Updated on every render so that
+  // tools called LATER in a single agentic loop see fresh data after
+  // earlier tools in the same loop mutated InstantDB. Without this, an
+  // assistant turn that does `create_category` then `apply_category_
+  // override` validates the second call against the snapshot taken
+  // BEFORE the first call ran, rejecting the just-created id. Codex
+  // HIGH on PR #32.
+  const liveRef = useRef({ allCategories, overrides, categories });
+  liveRef.current = { allCategories, overrides, categories };
 
   return useCallback(
     async (
@@ -137,13 +159,20 @@ export function useAgentRunner() {
           failedPayments,
           categories,
           bankSenders: senders,
+          overrides,
           now: new Date(),
           categorizeName,
+          // Getters that read fresh state via the ref — see comment on
+          // liveRef above for the why. The non-getter fields above are
+          // captured once for the run; tools that mutate state should
+          // use the getters for everything they touch.
+          getAllCategories: () => liveRef.current.allCategories,
+          getOverrides: () => liveRef.current.overrides,
         },
         emit,
         signal,
       });
     },
-    [payments, credits, failedPayments, categories, senders, categorizeName]
+    [payments, credits, failedPayments, categories, senders, overrides, categorizeName]
   );
 }

@@ -7,7 +7,6 @@ import { useConvertedPayments, useFailedPayments } from "../hooks/useTransaction
 import { useBankSenders } from "../hooks/useBankSenders";
 import { useRangeState } from "../hooks/useRangeState";
 import { isInRange, isValidIsoDateRange } from "../lib/dateRange";
-import { DEFAULT_CATEGORIES } from "../lib/utils";
 import { useCategorizer } from "../hooks/useCategorizer";
 import { currencySymbol, formatLocalDay, parseLocalDay } from "../ink/format";
 
@@ -19,7 +18,7 @@ export function Transactions() {
   const { payments } = useConvertedPayments();
   const { failedPayments } = useFailedPayments();
   const { senders } = useBankSenders();
-  const { getCategory, categorize: categorizeId } = useCategorizer();
+  const { getCategory, categorize: categorizeId, allCategories } = useCategorizer();
   // Drill-down search params accepted on first paint. Anything that doesn't
   // match falls through to the unfiltered default — chart drill-downs can
   // freely add params without breaking the page if a future link mistypes
@@ -32,7 +31,7 @@ export function Transactions() {
   const initialCat = (() => {
     const raw = searchParams.get("category");
     if (!raw) return "all";
-    return DEFAULT_CATEGORIES.some((c) => c.id === raw) ? raw : "all";
+    return allCategories.some((c) => c.id === raw) ? raw : "all";
   })();
   const initialMerchant = searchParams.get("merchant") || "";
   const initialCustom = (() => {
@@ -246,7 +245,7 @@ export function Transactions() {
             }}
           >
             <option value="all">All categories</option>
-            {DEFAULT_CATEGORIES.map((c) => (
+            {allCategories.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
               </option>
