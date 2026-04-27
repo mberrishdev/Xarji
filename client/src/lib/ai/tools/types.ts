@@ -7,7 +7,7 @@ import type { AIToolDefinition } from "../types";
 import type { AIBlock } from "../../aiThreads";
 import type { ConvertedPayment } from "../../../hooks/useTransactions";
 import type { ConvertedCredit } from "../../../hooks/useCredits";
-import type { FailedPayment, Category, BankSender } from "../../instant";
+import type { FailedPayment, Category, BankSender, MerchantCategoryOverride } from "../../instant";
 
 export interface AIToolContext {
   payments: ConvertedPayment[];
@@ -15,6 +15,12 @@ export interface AIToolContext {
   failedPayments: FailedPayment[];
   categories: Category[];
   bankSenders: BankSender[];
+  /** Live merchant-override rows. Write tools (apply_category_override)
+   *  read this to find an existing row's id so updates reuse it instead
+   *  of failing the unique-merchant constraint. Read tools also have
+   *  access in case the model wants to reason about which merchants
+   *  have been manually re-categorised. */
+  overrides: MerchantCategoryOverride[];
   now: Date;
   /** Override-aware category-name lookup for a merchant. Honours the
    *  user's manual `merchantCategoryOverrides` rows; falls back to the
