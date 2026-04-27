@@ -30,7 +30,13 @@ export interface RunAgentOpts {
   provider: AIProviderClient;
   model: string;
   systemPrompt: string;
-  userPrompt: string;
+  /** Full conversation history rendered as core provider messages.
+   *  The new user turn must be the last entry. The orchestrator does
+   *  not append anything before the first provider call — callers are
+   *  responsible for getting the shape right. Earlier passes only
+   *  forwarded the latest user turn, which silently broke multi-turn
+   *  follow-ups (the model couldn't see what was just discussed). */
+  messages: AICoreMessage[];
   tools: AITool[];
   toolContext: AIToolContext;
   emit: (event: AssistantEvent) => void;
@@ -38,9 +44,9 @@ export interface RunAgentOpts {
 }
 
 export async function runAgent(opts: RunAgentOpts): Promise<void> {
-  const messages: AICoreMessage[] = [
-    { role: "user", content: opts.userPrompt },
-  ];
+  // Copy so the agent loop's append-on-each-iteration doesn't mutate
+  // the caller's history array.
+  const messages: AICoreMessage[] = [...opts.messages];
   const toolDefs = opts.tools.map((t) => t.definition);
   const toolByName = new Map(opts.tools.map((t) => [t.definition.name, t]));
 

@@ -23,6 +23,7 @@ import {
 } from "../lib/aiThreads";
 import { useAgentRunner } from "../hooks/useAgentRunner";
 import type { AssistantEvent } from "../lib/ai/orchestrator";
+import type { AICoreMessage } from "../lib/ai/types";
 
 interface Suggestion {
   icon: string;
@@ -142,7 +143,49 @@ export function AssistantChat({ config, onClear }: { config: AIConfig; onClear: 
     runAgentForActive(trimmed);
   };
 
-  const runAgentForActive = (text: string) => {
+  /**
+   * Convert the thread's stored messages into the core provider shape
+   * the orchestrator wants. Past assistant turns may include tool-use
+   * + tool-result blocks that don't round-trip cleanly without their
+   * matched pairs, so we collapse each assistant turn down to its plain
+   * text content (the user-visible answer). User turns become the raw
+   * text of the prompt they typed. The new turn the user just sent is
+   * already in `thread.messages` by the time this runs.
+   *
+   * History is capped at the last `MAX_HISTORY_TURNS` core messages.
+   * Cheap insurance against unbounded growth — without a cap, a
+   * long-lived thread eventually exceeds the provider's context window
+   * and every follow-up returns 400. Token-aware budgeting would be
+   * the principled fix; this is the 80% solution that buys time for
+   * a real fix without shipping a known unbounded path.
+   */
+  const MAX_HISTORY_TURNS = 30;
+  const buildCoreHistory = (thread: AIThread): AICoreMessage[] => {
+    const out: AICoreMessage[] = [];
+    for (const m of thread.messages) {
+      const text = m.blocks
+        .filter((b): b is { kind: "text"; text: string } => b.kind === "text")
+        .map((b) => b.text)
+        .join("\n")
+        .trim();
+      if (!text) continue;
+      if (m.role === "user") {
+        out.push({ role: "user", content: text });
+      } else {
+        out.push({ role: "assistant", content: [{ type: "text", text }] });
+      }
+    }
+    // Drop oldest turns when over the cap. Keep the most recent — they
+    // carry the active conversational state, while older ones are
+    // increasingly stale and unlikely to be referenced by the user's
+    // current question.
+    if (out.length > MAX_HISTORY_TURNS) {
+      return out.slice(out.length - MAX_HISTORY_TURNS);
+    }
+    return out;
+  };
+
+  const runAgentForActive = (_text: string) => {
     // Capture the originating thread id at send time so streamed
     // events route to that conversation even if the user switches
     // threads mid-response. Without this, every event handler called
@@ -200,7 +243,12 @@ export function AssistantChat({ config, onClear }: { config: AIConfig; onClear: 
     };
 
     const finalConfig = { ...config, model };
-    runAgent(finalConfig, text, handle)
+    // Pull the freshest thread state from storage so the user's latest
+    // turn (just appended in `send()` above) is included in the history
+    // sent to the provider.
+    const originThread = loadThreads().find((t) => t.id === originThreadId);
+    const history = originThread ? buildCoreHistory(originThread) : [];
+    runAgent(finalConfig, history, handle)
       .catch((err) => {
         const message = err instanceof Error ? err.message : String(err);
         handle({
@@ -716,7 +764,7 @@ export function AssistantChat({ config, onClear }: { config: AIConfig; onClear: 
             <span>
               ↵ send · ⇧↵ newline · <span style={{ color: T.muted }}>⌘K</span> spotlight
             </span>
-            <span>connected to {provider.name} · keys never leave this Mac</span>
+            <span>connected to {provider.name}</span>
           </div>
         </div>
       </section>
