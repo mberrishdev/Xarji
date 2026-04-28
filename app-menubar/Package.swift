@@ -9,9 +9,19 @@ let package = Package(
         // availability checks for not much reach.
         .macOS(.v13),
     ],
+    dependencies: [
+        // Sparkle 2 — auto-updates. SwiftPM resolves into .build/.../Sparkle.framework
+        // which package_app.sh embeds into Xarji.app/Contents/Frameworks/. EdDSA-only
+        // (no DSA), no XPC variant (we ship non-sandboxed). See CLAUDE.md §6 for the
+        // codesign order, §10 for the JIT entitlement scoping (Sparkle gets none).
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),
+    ],
     targets: [
         .executableTarget(
             name: "XarjiMenuBar",
+            dependencies: [
+                .product(name: "Sparkle", package: "Sparkle"),
+            ],
             path: "Sources/XarjiMenuBar",
             resources: [
                 .process("Resources"),

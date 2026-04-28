@@ -1,5 +1,6 @@
 import AppKit
 import os
+import Sparkle
 
 /// Top-level lifecycle. Owns the child-process supervisor, the health
 /// poller, and the status-bar controller — hands them to each other on
@@ -11,6 +12,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var healthPoller: HealthPoller?
     private var statusBar: StatusBarController?
 
+    /// Sparkle 2 controller. Constructed lazily inside
+    /// `applicationDidFinishLaunching` because `SPUStandardUpdaterController.init`
+    /// is `@MainActor`-isolated and AppDelegate isn't actor-isolated at the
+    /// type level. `startingUpdater: true` enrols the app in the
+    /// background-check timer immediately on first read (interval comes from
+    /// SUScheduledCheckInterval in Info.plist — currently 24h). The
+    /// "Check for Updates…" menu item targets this controller's
+    /// `checkForUpdates(_:)` selector for manual user-triggered checks.
+    private var updaterController: SPUStandardUpdaterController?
+
     /// The compiled service binary publishes a JSON API here. The menu-bar
     /// app polls /api/health to drive the status icon and opens this URL
     /// in the user's default browser on "Open dashboard".
@@ -18,6 +29,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         logger.info("XarjiMenuBar launching")
+
+        let updater = SPUStandardUpdaterController(
+            startingUpdater: true,
+            updaterDelegate: nil,
+            userDriverDelegate: nil
+        )
+        self.updaterController = updater
 
         let core = CoreProcess(baseURL: AppDelegate.coreBaseURL)
         self.coreProcess = core
@@ -27,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let controller = StatusBarController(
             baseURL: AppDelegate.coreBaseURL,
+            updaterController: updater,
             onOpenDashboard: { [weak self] in self?.openDashboard() },
             onQuit: { [weak self] in self?.quit() }
         )

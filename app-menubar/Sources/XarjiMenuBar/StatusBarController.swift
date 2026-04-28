@@ -1,5 +1,6 @@
 import AppKit
 import os
+import Sparkle
 
 /// Owns the NSStatusItem, renders the current health snapshot, and
 /// translates menu-item clicks into callbacks.
@@ -38,6 +39,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     init(
         baseURL: URL,
+        updaterController: SPUStandardUpdaterController,
         onOpenDashboard: @escaping () -> Void,
         onQuit: @escaping () -> Void
     ) {
@@ -55,6 +57,14 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         self.statusLabelItem = NSMenuItem(title: "Status: loading…", action: nil, keyEquivalent: "")
         self.lastSyncItem = NSMenuItem(title: "Last sync: —", action: nil, keyEquivalent: "")
         self.sendersItem = NSMenuItem(title: "Senders: —", action: nil, keyEquivalent: "")
+        // The check-updates action selector resolves on Sparkle's controller
+        // directly — `target` is set below so AppKit dispatches the click
+        // there. No local handler needed.
+        let checkUpdatesItem = NSMenuItem(
+            title: "Check for Updates…",
+            action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)),
+            keyEquivalent: ""
+        )
         self.quitItem = NSMenuItem(title: "Quit Xarji", action: #selector(Self.handleQuit), keyEquivalent: "q")
 
         super.init()
@@ -64,6 +74,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         self.statusLabelItem.isEnabled = false
         self.lastSyncItem.isEnabled = false
         self.sendersItem.isEnabled = false
+        checkUpdatesItem.target = updaterController
 
         let menu = NSMenu()
         menu.delegate = self
@@ -72,6 +83,8 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         menu.addItem(statusLabelItem)
         menu.addItem(lastSyncItem)
         menu.addItem(sendersItem)
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(checkUpdatesItem)
         menu.addItem(NSMenuItem.separator())
         menu.addItem(quitItem)
 
