@@ -336,7 +336,7 @@ export function Transactions() {
                       </span>
                     </div>
                     {items.map((t, i) => (
-                      <TxRow key={t.id} t={t} isLast={i === items.length - 1} onClick={() => setSelectedId(t.id)} />
+                      <TxRow key={t.id} t={t} isLast={i === items.length - 1} selected={t.id === selectedId} onClick={() => setSelectedId(t.id === selectedId ? null : t.id)} />
                     ))}
                   </div>
                 );
@@ -346,7 +346,7 @@ export function Transactions() {
         </Card>
 
         {selected && (
-          <Card pad="22px 24px" style={{ display: "flex", flexDirection: "column" }}>
+          <Card pad="22px 24px" style={{ display: "flex", flexDirection: "column", position: "sticky", top: 28, alignSelf: "start", maxHeight: "calc(100vh - 56px)", overflowY: "auto" }}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 14 }}>
               <CardLabel>{selected.kind === "failed" ? "Declined payment" : "Payment"}</CardLabel>
               <button
