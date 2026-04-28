@@ -48,6 +48,24 @@ behind `xcrun notarytool store-credentials`.
    holds the actual password; this file just tells the build script which
    Keychain entry to use.
 
+5. **Sparkle EdDSA signing key** (auto-update signature). Generate once via
+   the Sparkle binary that SwiftPM downloaded:
+
+   ```
+   cd app-menubar
+   swift package resolve   # populates .build/artifacts/sparkle/
+   ./.build/artifacts/sparkle/Sparkle/bin/generate_keys
+   ```
+
+   Prints a base64 public key on stdout. Paste it as `SPARKLE_PUBLIC_KEY` in
+   `.release.env`. The matching private key sits in this Mac's login Keychain
+   under item name `https://sparkle-project.org` — back it up to a password
+   manager *now*. Lose it and every existing user has to manually reinstall
+   to migrate to a new keypair.
+
+   The same `generate_keys` invocation reports an existing pair if there's
+   already one in the Keychain — running it twice is safe.
+
 ## Cutting a release
 
 The happy path is one command:
@@ -59,8 +77,13 @@ The happy path is one command:
 Which does, in order:
 
 1. Runs `build.sh` — client build, embed, service binary, signed + notarized
-   `.app`, signed + notarized DMG, stapled, checksummed. Output lands in
-   `dist/releases/0.2.0/`.
+   `.app`, signed + notarized DMG, stapled, checksummed, EdDSA-signed. Output
+   lands in `dist/releases/0.2.0/`:
+   - `Xarji-0.2.0.dmg` — the installer
+   - `Xarji-0.2.0.dmg.sha256` — checksum
+   - `Xarji-0.2.0.dmg.eddsa.json` — Sparkle EdDSA signature (skipped with a
+     WARN if the SwiftPM artefact isn't resolved). All three need to be
+     uploaded to the GitHub release for the appcast feed to include it.
 2. Creates + pushes the annotated git tag `v0.2.0`. `release.yml` reacts to
    the tag push and creates an empty GitHub Release with auto-generated notes.
 3. Runs `publish.sh` — waits for the Release to appear, then
