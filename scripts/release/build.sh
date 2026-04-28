@@ -195,8 +195,43 @@ xcrun stapler validate "$DMG"
 log "Computing checksum"
 (cd "$RELEASE_DIR" && shasum -a 256 "Xarji-$VERSION.dmg" > "Xarji-$VERSION.dmg.sha256")
 
+# Sparkle EdDSA signature — read by the appcast generator on the landing
+# site to populate <enclosure sparkle:edSignature="…" length="…"/>. Both
+# values are needed: the signature proves the DMG hasn't been tampered
+# with, and `length` lets Sparkle abort downloads that get truncated by a
+# misconfigured CDN. sign_update reads the private key from this Mac's
+# Keychain (item name "https://sparkle-project.org") — there is no key
+# file passed in. Lose the keychain entry → no future releases can be
+# signed → existing users can never accept an update.
+SPARKLE_BIN="$REPO_ROOT/app-menubar/.build/artifacts/sparkle/Sparkle/bin/sign_update"
+if [[ -x "$SPARKLE_BIN" ]]; then
+  log "Signing DMG with Sparkle EdDSA key"
+  EDDSA_OUTPUT=$("$SPARKLE_BIN" "$DMG")
+  # sign_update prints attribute pairs on stdout, e.g.:
+  #   sparkle:edSignature="MEUC…" length="62914560"
+  # We re-shape into JSON so the appcast generator can parse the values
+  # without ad-hoc string slicing on the landing-site side.
+  SIG_VALUE=$(echo "$EDDSA_OUTPUT" | sed -n 's/.*sparkle:edSignature="\([^"]*\)".*/\1/p')
+  LEN_VALUE=$(echo "$EDDSA_OUTPUT" | sed -n 's/.*length="\([0-9]*\)".*/\1/p')
+  if [[ -n "$SIG_VALUE" && -n "$LEN_VALUE" ]]; then
+    EDDSA_FILE="$RELEASE_DIR/Xarji-$VERSION.dmg.eddsa.json"
+    printf '{"version":"%s","edSignature":"%s","length":%s}\n' \
+      "$VERSION" "$SIG_VALUE" "$LEN_VALUE" > "$EDDSA_FILE"
+  else
+    fail "Could not parse sign_update output: $EDDSA_OUTPUT"
+  fi
+else
+  printf "WARN: sign_update not found at %s — skipping EdDSA signature.\n" "$SPARKLE_BIN" >&2
+  printf "      Run 'cd app-menubar && swift package resolve' to install it.\n" >&2
+  printf "      Without the .eddsa.json asset, the appcast won't include this version.\n" >&2
+  EDDSA_FILE=""
+fi
+
 log "Done."
 printf "\n  DMG:       %s\n" "$DMG"
 printf "  checksum:  %s\n" "$CHECKSUM"
+if [[ -n "$EDDSA_FILE" ]]; then
+  printf "  EdDSA:     %s\n" "$EDDSA_FILE"
+fi
 printf "  version:   %s\n" "$VERSION"
 printf "  tag:       %s (not yet pushed)\n\n" "$TAG"
