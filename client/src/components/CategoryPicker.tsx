@@ -59,7 +59,17 @@ export function CategoryPicker({
     const onDoc = (e: MouseEvent) => {
       if (!ref.current?.contains(e.target as Node)) onClose();
     };
-    const onScroll = () => onClose();
+    // Scroll-to-dismiss is for *page* scroll (the picker is positioned
+    // against absolute viewport coords, so a scrolled background would
+    // strand the dropdown). When the picker's own category list overflows
+    // and the user scrolls that list, the event target is inside the
+    // portal — keep the picker open in that case so lower options stay
+    // reachable. (Codex P2 on PR #38.)
+    const onScroll = (e: Event) => {
+      const target = e.target as Node | null;
+      if (target && ref.current?.contains(target)) return;
+      onClose();
+    };
     window.addEventListener("scroll", onScroll, { capture: true, passive: true });
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
