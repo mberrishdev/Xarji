@@ -32,7 +32,7 @@ export function CategoryPicker({
   const T = useTheme();
   const ref = useRef<HTMLDivElement | null>(null);
   const anchorRef = useRef<HTMLSpanElement | null>(null);
-  const [dropdownPos, setDropdownPos] = useState<{ top?: number; bottom?: number; left?: number; right?: number } | null>(null);
+  const [dropdownPos, setDropdownPos] = useState<{ top?: number; bottom?: number; left?: number; right?: number; maxHeight: number } | null>(null);
   const { byMerchant, setOverride: setMerchantOverride, clearOverride: clearMerchantOverride } = useMerchantOverrides();
   const { byPaymentId, setOverride: setTxOverride, clearOverride: clearTxOverride } = useTransactionOverrides();
   const { allCategories } = useCategorizer();
@@ -59,6 +59,8 @@ export function CategoryPicker({
     const onDoc = (e: MouseEvent) => {
       if (!ref.current?.contains(e.target as Node)) onClose();
     };
+    const onScroll = () => onClose();
+    window.addEventListener("scroll", onScroll, { capture: true, passive: true });
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         if (creating) {
@@ -76,6 +78,7 @@ export function CategoryPicker({
     return () => {
       document.removeEventListener("mousedown", onDoc);
       document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", onScroll, { capture: true });
     };
   }, [onClose, creating]);
 
@@ -92,15 +95,17 @@ export function CategoryPicker({
     const parent = anchorRef.current?.parentElement;
     if (!parent) return;
     const rect = parent.getBoundingClientRect();
-    const spaceBelow = window.innerHeight - rect.bottom;
-    const flipUp = spaceBelow < 320;
+    const margin = 12;
+    const spaceBelow = window.innerHeight - rect.bottom - margin;
+    const spaceAbove = rect.top - margin;
+    const flipUp = spaceBelow < 320 && spaceAbove > spaceBelow;
     const hPos = anchor === "right"
       ? { right: window.innerWidth - rect.right }
       : { left: rect.left };
     if (flipUp) {
-      setDropdownPos({ ...hPos, bottom: window.innerHeight - rect.top + 6 });
+      setDropdownPos({ ...hPos, bottom: window.innerHeight - rect.top + 6, maxHeight: spaceAbove });
     } else {
-      setDropdownPos({ ...hPos, top: rect.bottom + 6 });
+      setDropdownPos({ ...hPos, top: rect.bottom + 6, maxHeight: spaceBelow });
     }
   }, [anchor]);
 
@@ -187,6 +192,7 @@ export function CategoryPicker({
         right: dropdownPos.right,
         zIndex: 1000,
         minWidth: 300,
+        maxHeight: dropdownPos.maxHeight,
         background: T.panel,
         border: `1px solid ${T.lineStrong}`,
         borderRadius: 12,
@@ -195,6 +201,7 @@ export function CategoryPicker({
         display: "flex",
         flexDirection: "column",
         gap: 2,
+        overflow: "hidden",
       }}
     >
       {creating ? (
@@ -320,7 +327,7 @@ export function CategoryPicker({
               <ScopeBtn T={T} label={`All ${merchant.slice(0, 10)}${merchant.length > 10 ? "…" : ""} transactions`} active={scope === "merchant"} onClick={() => setScope("merchant")} />
             </div>
           )}
-          <div style={{ display: "flex", flexDirection: "column", maxHeight: 280, overflowY: "auto" }}>
+          <div style={{ display: "flex", flexDirection: "column", flex: 1, overflowY: "auto", minHeight: 0 }}>
             {allCategories.map((cat) => (
               <CategoryRow
                 key={cat.id}

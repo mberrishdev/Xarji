@@ -31,11 +31,13 @@ export function TxRow({
   t,
   isLast,
   compact,
+  selected,
   onClick,
 }: {
   t: InkTx;
   isLast?: boolean;
   compact?: boolean;
+  selected?: boolean;
   onClick?: () => void;
 }) {
   const T = useTheme();
@@ -49,8 +51,9 @@ export function TxRow({
   // user-meaningful category, and overriding a declined transaction's
   // categorisation has no downstream effect either.
   const canChangeCategory = t.kind === "payment" && !!t.merchant;
-  const pad = compact ? "10px 0" : T.density.rowPad;
-  const isFx = (t.kind === "payment" || t.kind === "credit") && t.currency !== "GEL";
+  const pad = compact ? "10px 5px" : T.density.rowPad;
+  const isFx =
+    (t.kind === "payment" || t.kind === "credit") && t.currency !== "GEL";
   const cols = vp.narrow ? "32px 1fr 90px" : "36px 1fr 110px 110px 90px";
   const symbol = currencySymbol(t.currency);
 
@@ -78,6 +81,9 @@ export function TxRow({
         alignItems: "center",
         cursor: onClick ? "pointer" : "default",
         position: "relative",
+        background: selected ? T.accentSoft : "transparent",
+        borderRadius: selected ? 8 : 0,
+        transition: "background 0.15s ease",
       }}
     >
       <div
@@ -88,10 +94,10 @@ export function TxRow({
           background: credit
             ? "rgba(75,217,162,0.18)"
             : failed
-            ? T.accentSoft
-            : cat
-            ? `${cat.color}22`
-            : T.panelAlt,
+              ? T.accentSoft
+              : cat
+                ? `${cat.color}22`
+                : T.panelAlt,
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -115,13 +121,32 @@ export function TxRow({
             gap: 8,
           }}
         >
-          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: vp.narrow ? 180 : 240 }}>
+          <span
+            style={{
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              maxWidth: vp.narrow ? 180 : 240,
+            }}
+          >
             {t.merchant || t.counterparty || "—"}
           </span>
           {failed && <Pill>Declined</Pill>}
-          {credit && <Pill bg="rgba(75,217,162,0.15)" color={T.green}>Income</Pill>}
-          {isFx && <Pill bg={T.panelAlt} color={T.muted}>{t.currency}</Pill>}
-          {t.excludedFromAnalytics && <Pill bg={T.panelAlt} color={T.dim}>Excluded</Pill>}
+          {credit && (
+            <Pill bg="rgba(75,217,162,0.15)" color={T.green}>
+              Income
+            </Pill>
+          )}
+          {isFx && (
+            <Pill bg={T.panelAlt} color={T.muted}>
+              {t.currency}
+            </Pill>
+          )}
+          {t.excludedFromAnalytics && (
+            <Pill bg={T.panelAlt} color={T.dim}>
+              Excluded
+            </Pill>
+          )}
         </div>
         <div
           style={{
@@ -143,7 +168,14 @@ export function TxRow({
         </div>
       </div>
       {!vp.narrow && (
-        <div style={{ fontFamily: T.sans, fontSize: 12, fontWeight: 500, position: "relative" }}>
+        <div
+          style={{
+            fontFamily: T.sans,
+            fontSize: 12,
+            fontWeight: 500,
+            position: "relative",
+          }}
+        >
           {canChangeCategory ? (
             <button
               onClick={(e) => {
@@ -167,10 +199,14 @@ export function TxRow({
                 transition: "background .12s ease",
               }}
               onMouseEnter={(e) => {
-                if (!pickerOpen) (e.currentTarget as HTMLButtonElement).style.background = T.panelAlt;
+                if (!pickerOpen)
+                  (e.currentTarget as HTMLButtonElement).style.background =
+                    T.panelAlt;
               }}
               onMouseLeave={(e) => {
-                if (!pickerOpen) (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+                if (!pickerOpen)
+                  (e.currentTarget as HTMLButtonElement).style.background =
+                    "transparent";
               }}
             >
               <span
@@ -184,7 +220,9 @@ export function TxRow({
               {cat?.name}
             </button>
           ) : (
-            <span style={{ color: T.muted }}>{credit ? "Income" : cat?.name}</span>
+            <span style={{ color: T.muted }}>
+              {credit ? "Income" : cat?.name}
+            </span>
           )}
           {pickerOpen && cat && (
             <CategoryPicker
@@ -197,13 +235,32 @@ export function TxRow({
         </div>
       )}
       {!vp.narrow && (
-        <div style={{ fontFamily: T.mono, fontSize: 10, color: T.dim, letterSpacing: 0.3 }}>
-          {new Date(t.transactionDate).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+        <div
+          style={{
+            fontFamily: T.mono,
+            fontSize: 10,
+            color: T.dim,
+            letterSpacing: 0.3,
+          }}
+        >
+          {new Date(t.transactionDate).toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+          })}
         </div>
       )}
       <div style={{ textAlign: "right" }}>
         {failed ? (
-          <span style={{ fontFamily: T.sans, fontSize: 15, color: T.accent, fontWeight: 600 }}>—</span>
+          <span
+            style={{
+              fontFamily: T.sans,
+              fontSize: 15,
+              color: T.accent,
+              fontWeight: 600,
+            }}
+          >
+            —
+          </span>
         ) : (
           <span
             style={{
@@ -216,7 +273,9 @@ export function TxRow({
               // Dim the amount on excluded rows so the user can tell
               // at a glance the row isn't part of any total.
               opacity: t.excludedFromAnalytics ? 0.5 : 1,
-              textDecoration: t.excludedFromAnalytics ? "line-through" : undefined,
+              textDecoration: t.excludedFromAnalytics
+                ? "line-through"
+                : undefined,
             }}
           >
             {credit ? "+" : "−"}
