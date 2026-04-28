@@ -87,6 +87,23 @@ else
   echo "WARN: no AppIcon.png at $ICON_SRC — building without a bundle icon"
 fi
 
+# Sparkle 2 expects SUPublicEDKey to be either absent OR a valid base64
+# EdDSA key. Emitting `<string></string>` is treated as a malformed
+# configuration: SPUStandardUpdaterController fails startup with a fatal
+# updater alert and disables manual checks. So conditionally inject the
+# key only when the env var is non-empty — leaving it out entirely makes
+# Sparkle treat the build as "no signature verification configured yet,"
+# which is the correct state for a Phase 1 build that has the framework
+# embedded but no signing pipeline yet. (Codex P2 on PR #39.)
+SPARKLE_KEY_PLIST=""
+if [[ -n "${SPARKLE_PUBLIC_KEY:-}" ]]; then
+  SPARKLE_KEY_PLIST="    <key>SUPublicEDKey</key><string>${SPARKLE_PUBLIC_KEY}</string>"
+else
+  echo "WARN: SPARKLE_PUBLIC_KEY is empty — SUPublicEDKey omitted from Info.plist."
+  echo "      Sparkle's startup will warn that updates aren't EdDSA-verified."
+  echo "      Set the key in .release.env before shipping a public build."
+fi
+
 # LSUIElement=true hides the Dock icon so the app is menu-bar-only.
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -107,7 +124,7 @@ ${ICON_PLIST_KEY}
     <key>BuildTimestamp</key><string>${BUILD_TIMESTAMP}</string>
     <key>GitCommit</key><string>${GIT_COMMIT}</string>
     <key>SUFeedURL</key><string>${SPARKLE_FEED_URL:-https://xarji-landing.placeholder/appcast.xml}</string>
-    <key>SUPublicEDKey</key><string>${SPARKLE_PUBLIC_KEY:-}</string>
+${SPARKLE_KEY_PLIST}
     <key>SUEnableAutomaticChecks</key><true/>
     <key>SUScheduledCheckInterval</key><integer>86400</integer>
     <key>SUAutomaticallyDownloadUpdates</key><false/>
