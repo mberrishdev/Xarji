@@ -31,9 +31,16 @@ cd "$REPO_ROOT"
 RELEASE_DIR="$REPO_ROOT/dist/releases/$VERSION"
 DMG="$RELEASE_DIR/Xarji-$VERSION.dmg"
 CHECKSUM="$RELEASE_DIR/Xarji-$VERSION.dmg.sha256"
+# Sparkle EdDSA signature emitted by build.sh — the appcast generator
+# on the landing site needs this asset to include the release in the
+# auto-update feed. Treated as required: build.sh prints a WARN and
+# skips the file when sign_update isn't installed, so reaching here
+# without it means the release would silently disappear from the feed.
+EDDSA="$RELEASE_DIR/Xarji-$VERSION.dmg.eddsa.json"
 
 [[ -f "$DMG" ]] || fail "$DMG missing — run build.sh first."
 [[ -f "$CHECKSUM" ]] || fail "$CHECKSUM missing — run build.sh first."
+[[ -f "$EDDSA" ]] || fail "$EDDSA missing — run build.sh first (or check that the Sparkle SwiftPM artefact resolved). The appcast generator skips releases without this asset."
 
 command -v gh >/dev/null || fail "gh CLI not installed"
 gh auth status >/dev/null 2>&1 || fail "gh CLI not authenticated — run \`gh auth login\`"
@@ -57,12 +64,12 @@ for attempt in $(seq 1 30); do
   sleep 2
 done
 
-log "Uploading DMG + checksum to release $TAG"
-gh release upload "$TAG" "$DMG" "$CHECKSUM" --clobber
+log "Uploading DMG + checksum + EdDSA signature to release $TAG"
+gh release upload "$TAG" "$DMG" "$CHECKSUM" "$EDDSA" --clobber
 
 RELEASE_URL=$(gh release view "$TAG" --json url --jq .url)
 
 log "Done."
 printf "\n  tag:       %s\n" "$TAG"
 printf "  release:   %s\n" "$RELEASE_URL"
-printf "  artifacts: %s, %s\n\n" "$(basename "$DMG")" "$(basename "$CHECKSUM")"
+printf "  artifacts: %s, %s, %s\n\n" "$(basename "$DMG")" "$(basename "$CHECKSUM")" "$(basename "$EDDSA")"
