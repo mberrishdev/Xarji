@@ -87,6 +87,23 @@ else
   echo "WARN: no AppIcon.png at $ICON_SRC — building without a bundle icon"
 fi
 
+# Sparkle 2 expects SUPublicEDKey to be either absent OR a valid base64
+# EdDSA key. Emitting `<string></string>` is treated as a malformed
+# configuration: SPUStandardUpdaterController fails startup with a fatal
+# updater alert and disables manual checks. So conditionally inject the
+# key only when the env var is non-empty — leaving it out entirely makes
+# Sparkle treat the build as "no signature verification configured yet,"
+# which is the correct state for a Phase 1 build that has the framework
+# embedded but no signing pipeline yet. (Codex P2 on PR #39.)
+SPARKLE_KEY_PLIST=""
+if [[ -n "${SPARKLE_PUBLIC_KEY:-}" ]]; then
+  SPARKLE_KEY_PLIST="    <key>SUPublicEDKey</key><string>${SPARKLE_PUBLIC_KEY}</string>"
+else
+  echo "WARN: SPARKLE_PUBLIC_KEY is empty — SUPublicEDKey omitted from Info.plist."
+  echo "      Sparkle's startup will warn that updates aren't EdDSA-verified."
+  echo "      Set the key in .release.env before shipping a public build."
+fi
+
 # LSUIElement=true hides the Dock icon so the app is menu-bar-only.
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -106,6 +123,11 @@ ${ICON_PLIST_KEY}
     <key>NSHighResolutionCapable</key><true/>
     <key>BuildTimestamp</key><string>${BUILD_TIMESTAMP}</string>
     <key>GitCommit</key><string>${GIT_COMMIT}</string>
+    <key>SUFeedURL</key><string>${SPARKLE_FEED_URL:-https://xarji-landing.placeholder/appcast.xml}</string>
+${SPARKLE_KEY_PLIST}
+    <key>SUEnableAutomaticChecks</key><true/>
+    <key>SUScheduledCheckInterval</key><integer>86400</integer>
+    <key>SUAutomaticallyDownloadUpdates</key><false/>
 </dict>
 </plist>
 PLIST
@@ -128,6 +150,21 @@ if [[ ! -x "$XARJI_CORE_BINARY" ]]; then
 fi
 cp "$XARJI_CORE_BINARY" "$APP/Contents/MacOS/xarji-core"
 chmod +x "$APP/Contents/MacOS/xarji-core"
+
+# Embed Sparkle.framework. SwiftPM resolves the dependency declared in
+# Package.swift and downloads the binary artefact as an xcframework. We
+# embed the macos-arm64 slice into Contents/Frameworks/ so the app can
+# link against it at runtime. Each helper inside the framework
+# (Autoupdate, Updater.app, XPCServices) gets signed individually below
+# — `codesign --deep` is deprecated for distribution signing.
+SPARKLE_FW_SRC="$ROOT/.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
+if [[ ! -d "$SPARKLE_FW_SRC" ]]; then
+  echo "ERROR: Sparkle.framework not found at $SPARKLE_FW_SRC" >&2
+  echo "       Run 'swift package resolve' or 'swift build' first." >&2
+  exit 1
+fi
+mkdir -p "$APP/Contents/Frameworks"
+ditto "$SPARKLE_FW_SRC" "$APP/Contents/Frameworks/Sparkle.framework"
 
 # Bundle any SwiftPM .bundle resources next to the executable.
 BUILD_DIR=".build/arm64-apple-macosx/$CONF"
@@ -169,6 +206,29 @@ fi
 
 # Sign the inner xarji-core first so the outer signature covers it.
 codesign "${CORE_CODESIGN_ARGS[@]}" "$APP/Contents/MacOS/xarji-core"
+
+# Sparkle helpers: each binary inside the framework needs its own
+# signature pass (Apple deprecated --deep for distribution signing).
+# Inner-most binaries first, then the framework wrapper, so each
+# enclosing signature transitively covers what it contains.
+SPARKLE_FW="$APP/Contents/Frameworks/Sparkle.framework"
+if [[ -d "$SPARKLE_FW" ]]; then
+  # XPCServices ship inside Sparkle even in the non-sandboxed install:
+  # the framework expects them, signing without them yields a
+  # codesign --verify --deep error at notarization time.
+  for xpc in "$SPARKLE_FW/Versions/B/XPCServices/"*.xpc; do
+    [[ -d "$xpc" ]] || continue
+    codesign "${CODESIGN_ARGS[@]}" "$xpc"
+  done
+  if [[ -f "$SPARKLE_FW/Versions/B/Autoupdate" ]]; then
+    codesign "${CODESIGN_ARGS[@]}" "$SPARKLE_FW/Versions/B/Autoupdate"
+  fi
+  if [[ -d "$SPARKLE_FW/Versions/B/Updater.app" ]]; then
+    codesign "${CODESIGN_ARGS[@]}" "$SPARKLE_FW/Versions/B/Updater.app"
+  fi
+  codesign "${CODESIGN_ARGS[@]}" "$SPARKLE_FW"
+fi
+
 codesign "${CODESIGN_ARGS[@]}" "$APP"
 
 echo ""

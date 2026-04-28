@@ -326,13 +326,22 @@ Hooks (`usePayments`, `useCredits`, `useSignals`) are thin wrappers around `db.u
     - `com.apple.security.cs.allow-unsigned-executable-memory` — true
 
     Without these the Bun-compiled binary dies on first JIT allocation with `Ran out of executable memory while allocating N bytes.` under hardened runtime. See §10 gotchas.
-8. Signs the outer app (no JIT entitlements — the Swift shell doesn't need them).
+8. **Embeds + signs `Sparkle.framework`** at `Contents/Frameworks/Sparkle.framework`. SwiftPM resolves Sparkle 2 (declared in `Package.swift`) into `.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/`; `package_app.sh` ditto-copies the framework, then signs each helper individually (Apple deprecated `--deep` for distribution): inner XPCs (`Downloader.xpc`, `Installer.xpc`) → `Autoupdate` → `Updater.app` → framework wrapper. Sparkle gets **no entitlements** — only `xarji-core` carries JIT rights. Sparkle's feed URL (`SUFeedURL`) and EdDSA public key (`SUPublicEDKey`) come from `SPARKLE_FEED_URL` + `SPARKLE_PUBLIC_KEY` env vars threaded through from `.release.env`; see §6.4.
+9. Signs the outer app (no JIT entitlements — the Swift shell doesn't need them).
 
 `version.env` (at `app-menubar/version.env`) is the source of truth for `MARKETING_VERSION` + `BUILD_NUMBER`. `package_app.sh` lets the environment override the file so `scripts/release/build.sh` can pass a specific version without editing the committed file.
 
 ### 6.3 Entitlements plist syntax
 
 **AMFIUnserializeXML (the kernel's entitlements parser) is strict.** It rejects XML comments, CDATA, and anything unusual. `plutil -lint` will happily pass a file that `codesign` refuses. Keep the plist minimal, no XML comments. Explanatory prose goes in `package_app.sh` instead.
+
+### 6.4 Sparkle 2 auto-updates
+
+The menu-bar app ships with Sparkle 2 embedded for in-app auto-updates. `AppDelegate.swift` constructs an `SPUStandardUpdaterController` lazily inside `applicationDidFinishLaunching` (the init is `@MainActor`-isolated, AppDelegate isn't); `StatusBarController.swift` wires a "Check for Updates…" menu item whose action selector targets the controller directly — no local handler, AppKit dispatches the click straight into Sparkle. Background checks run every 24 h (`SUScheduledCheckInterval=86400`); install requires user confirmation (`SUAutomaticallyDownloadUpdates=false`).
+
+Trust chain: Apple Developer ID + notarization on the DMG (existing) plus Sparkle's EdDSA signature on the same DMG (new). The EdDSA keypair is generated once via `Sparkle/bin/generate_keys`; private key lives in this Mac's login Keychain under item name `https://sparkle-project.org`, public key (base64) goes into `Info.plist` as `SUPublicEDKey`. Lose the private key and every existing user has to manually reinstall to accept updates signed with a new keypair — back it up to a password manager.
+
+The appcast feed URL points at `https://<landing-host>/appcast.xml` once Phase 2 lands. During Phase 1 the URL is a deliberate placeholder so the menu item works but no update is ever found — Sparkle silently logs and reports "you're up to date."
 
 ---
 

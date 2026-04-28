@@ -45,6 +45,13 @@ source "$ENV_FILE"
 
 : "${APP_IDENTITY:?APP_IDENTITY is empty in .release.env}"
 : "${NOTARY_PROFILE:?NOTARY_PROFILE is empty in .release.env}"
+# Sparkle env vars are optional in .release.env — when unset, the
+# Info.plist defaults to a placeholder feed URL and the app reports
+# "you're up to date" on every check. That's the intended Phase 1
+# behaviour; Phase 2 sets the real feed.
+: "${SPARKLE_FEED_URL:=}"
+: "${SPARKLE_PUBLIC_KEY:=}"
+export SPARKLE_FEED_URL SPARKLE_PUBLIC_KEY
 
 # -------- preflight --------
 
