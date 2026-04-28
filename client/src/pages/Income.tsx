@@ -58,6 +58,7 @@ export function Income() {
       category: "other",
       rawMessage: c.rawMessage,
       counterparty: c.counterparty,
+      excludedFromAnalytics: c.excludedFromAnalytics,
     }));
   }, [credits]);
 
