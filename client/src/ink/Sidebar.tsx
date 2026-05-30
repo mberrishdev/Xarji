@@ -29,6 +29,7 @@ export function Sidebar({
     { to: "/transactions", name: "Transactions", glyph: "≡", badge: txCount ? txCount.toLocaleString("en-US") : undefined },
     { to: "/income", name: "Income", glyph: "↓", badge: incomeCount ? incomeCount.toLocaleString("en-US") : undefined },
     { to: "/categories", name: "Categories", glyph: "◐" },
+    { to: "/category-transactions", name: "By Category", glyph: "◧" },
     { to: "/budgets", name: "Flex Budgeting", glyph: "◇" },
     { to: "/merchants", name: "Merchants", glyph: "◆" },
     // pillBadge for Must Pay (vs the muted `badge` used by Transactions

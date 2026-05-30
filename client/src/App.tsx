@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Layout } from "./components/Layout";
-import { Dashboard, Transactions, Categories, Budgets, Merchants, Income, Signals, Settings, Assistant, Plan } from "./pages";
+import { Dashboard, Transactions, Categories, Budgets, Merchants, Income, Signals, Settings, Assistant, Plan, ByCategoryPage } from "./pages";
 
 function App() {
   return (
@@ -17,6 +17,7 @@ function App() {
           <Route path="assistant" element={<Assistant />} />
           <Route path="signals" element={<Signals />} />
           <Route path="manage" element={<Settings />} />
+          <Route path="category-transactions" element={<ByCategoryPage />} />
           {/* Compatibility redirects for the routes that existed in the
               previous version of the app, so old bookmarks and shared
               links still resolve. */}
