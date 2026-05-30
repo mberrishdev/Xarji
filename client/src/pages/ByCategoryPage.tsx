@@ -25,7 +25,7 @@ import { useConvertedPayments } from "../hooks/useTransactions";
 import { useCategorizer } from "../hooks/useCategorizer";
 import { useCategories, useCategoryActions } from "../hooks/useCategories";
 import { useRangeState } from "../hooks/useRangeState";
-import { isInRange } from "../lib/dateRange";
+import { isInRange, previousRange, type DateRange } from "../lib/dateRange";
 import { formatGEL } from "../ink/format";
 import type { InkCategory } from "../lib/utils";
 
@@ -154,6 +154,56 @@ export function ByCategoryPage() {
   const totalTxCount = useMemo(() => visibleCats.reduce((s, c) => s + c.count, 0), [visibleCats]);
   const catsWithTarget = useMemo(() => visibleCats.filter((c) => dbById.get(c.cat)?.targetAmount).length, [visibleCats, dbById]);
 
+  // The 3 periods immediately before the current range, oldest→newest.
+  // Using previousRange iteratively means this automatically follows the
+  // selected range type: Month → 3 prior months, Cycle → 3 prior cycles,
+  // Week → 3 prior weeks, etc.
+  const prevRanges = useMemo((): DateRange[] => {
+    if (range.key === "Today" || range.key === "Custom") return [];
+    const r1 = previousRange(range);
+    const r2 = previousRange(r1);
+    const r3 = previousRange(r2);
+    return [r3, r2, r1];
+  }, [range]);
+
+  // Category totals for each of the 3 prior periods. One pass over all
+  // payments to build all three maps simultaneously.
+  const sparklineData = useMemo(() => {
+    if (prevRanges.length === 0) return {};
+    const maps: Record<string, number>[] = prevRanges.map(() => ({}));
+    for (const p of payments) {
+      if (p.excludedFromAnalytics || p.gelAmount === null) continue;
+      for (let i = 0; i < prevRanges.length; i++) {
+        if (isInRange(p.transactionDate, prevRanges[i])) {
+          const catId = categorize(p.merchant, p.rawMessage, p.id);
+          maps[i][catId] = (maps[i][catId] ?? 0) + p.gelAmount;
+        }
+      }
+    }
+    const allCatIds = new Set(maps.flatMap((m) => Object.keys(m)));
+    const result: Record<string, number[]> = {};
+    for (const catId of allCatIds) {
+      result[catId] = maps.map((m) => m[catId] ?? 0);
+    }
+    return result;
+  }, [payments, prevRanges, categorize]);
+
+  // The most-recent previous period totals (prevRanges[2]) — used for the
+  // delta pill: ↑18% means this period is 18% higher than the period before.
+  const prevCatTotals = useMemo(() => {
+    const last = prevRanges[2];
+    if (!last) return {};
+    const map: Record<string, number> = {};
+    for (const p of payments) {
+      if (p.excludedFromAnalytics || p.gelAmount === null) continue;
+      if (!isInRange(p.transactionDate, last)) continue;
+      const catId = categorize(p.merchant, p.rawMessage, p.id);
+      map[catId] = (map[catId] ?? 0) + p.gelAmount;
+    }
+    return map;
+  }, [payments, prevRanges, categorize]);
+
+
   const saveLimitEdit = async (catId: string) => {
     const val = parseFloat(limitDraft);
     if (!isNaN(val) && val > 0) {
@@ -240,6 +290,9 @@ export function ByCategoryPage() {
                         targetAmount={dbById.get(c.cat)?.targetAmount}
                         limitEditId={limitEditId}
                         limitDraft={limitDraft}
+                        prevTotal={prevCatTotals[c.cat]}
+                        sparkValues={sparklineData[c.cat] ?? []}
+                        sparkLabels={prevRanges.map((r) => r.label.split(" ")[0])}
                         T={T}
                         onToggle={toggle}
                         onSelectTx={setSelectedTxId}
@@ -293,6 +346,9 @@ function SortableRow({
   targetAmount,
   limitEditId,
   limitDraft,
+  prevTotal,
+  sparkValues,
+  sparkLabels,
   T,
   onToggle,
   onSelectTx,
@@ -311,6 +367,9 @@ function SortableRow({
   targetAmount: number | undefined;
   limitEditId: string | null;
   limitDraft: string;
+  prevTotal?: number;
+  sparkValues: number[];
+  sparkLabels: string[];
   T: ReturnType<typeof useTheme>;
   onToggle: (id: string) => void;
   onSelectTx: (id: string | null) => void;
@@ -324,6 +383,10 @@ function SortableRow({
   const isLastCat = idx === total - 1;
   const isEditingLimit = limitEditId === c.cat;
   const pct = targetAmount ? (c.total / targetAmount) * 100 : 0;
+
+  const delta = prevTotal && prevTotal > 0
+    ? ((c.total - prevTotal) / prevTotal) * 100
+    : null;
 
   return (
     <div
@@ -459,6 +522,23 @@ function SortableRow({
         >
           {formatGEL(c.total, { decimals: 0 })}
         </span>
+
+        {delta !== null && (
+          <span
+            style={{
+              fontSize: 10.5,
+              fontFamily: T.mono,
+              fontWeight: 700,
+              color: delta > 0 ? T.accent : "#4BD9A2",
+              minWidth: 36,
+              textAlign: "right",
+              flexShrink: 0,
+            }}
+          >
+            {delta > 0 ? "↑" : "↓"}{Math.abs(delta).toFixed(0)}%
+          </span>
+        )}
+
         <button
           type="button"
           title="Exclude from this view"
@@ -509,6 +589,22 @@ function SortableRow({
             transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
             style={{ overflow: "hidden" }}
           >
+            {sparkValues.length >= 2 && (
+              <div
+                style={{
+                  padding: "10px 20px 10px",
+                  borderBottom: `1px solid ${T.line}`,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 14,
+                }}
+              >
+                <span style={{ fontSize: 10, color: T.dim, fontFamily: T.mono, whiteSpace: "nowrap" }}>
+                  prev periods
+                </span>
+                <Sparkline values={sparkValues} labels={sparkLabels} color={c.meta.color} T={T} />
+              </div>
+            )}
             <div style={{ paddingBottom: 8 }}>
               {txs.map((t, i) => (
                 <TxRow
@@ -677,6 +773,56 @@ function ExcludedSection({
         )}
       </AnimatePresence>
     </Card>
+  );
+}
+
+function Sparkline({
+  values,
+  labels,
+  color,
+  T,
+}: {
+  values: number[];
+  labels: string[];
+  color: string;
+  T: ReturnType<typeof useTheme>;
+}) {
+  const w = 120, h = 28;
+  const max = Math.max(...values, 1);
+  const pts = values
+    .map((v, i) => {
+      const x = (i / (values.length - 1)) * w;
+      const y = h - 4 - (v / max) * (h - 8);
+      return `${x},${y}`;
+    })
+    .join(" ");
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      <svg width={w} height={h} style={{ overflow: "visible" }}>
+        <polyline
+          points={pts}
+          fill="none"
+          stroke={color}
+          strokeWidth={1.5}
+          strokeLinejoin="round"
+          strokeLinecap="round"
+          opacity={0.8}
+        />
+        {values.map((v, i) => {
+          const x = (i / (values.length - 1)) * w;
+          const y = h - 4 - (v / max) * (h - 8);
+          return <circle key={i} cx={x} cy={y} r={2.5} fill={color} opacity={0.9} />;
+        })}
+      </svg>
+      <div style={{ display: "flex", justifyContent: "space-between", width: w }}>
+        {labels.map((l, i) => (
+          <span key={i} style={{ fontSize: 9, color: T.faint, fontFamily: T.mono }}>
+            {l.slice(0, 3).toUpperCase()}
+          </span>
+        ))}
+      </div>
+    </div>
   );
 }
 
