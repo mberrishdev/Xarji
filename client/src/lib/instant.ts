@@ -53,6 +53,8 @@ const schema = i.schema({
       targetAmount: i.number().optional(),
       frequencyMonths: i.number().optional(),
       rolloverEnabled: i.boolean().optional(),
+      sortOrder: i.number().optional(),
+      viewHidden: i.boolean().optional(),
     }),
     // Per-month flex-budgeting plan, keyed on "YYYY-MM". Holds the
     // user's expected-income override + flex-pool override + savings
@@ -240,6 +242,8 @@ export type Category = {
   targetAmount?: number;
   frequencyMonths?: number;
   rolloverEnabled?: boolean;
+  sortOrder?: number;
+  viewHidden?: boolean;
 };
 
 export type BudgetPlan = {

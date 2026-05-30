@@ -4,7 +4,7 @@
 // custom inputs). Pages stay one-liner thin.
 
 import { useEffect, useMemo, useState } from "react";
-import { rangeFromKey, type DateRange, type RangeKey } from "../lib/dateRange";
+import { rangeFromKey, RANGE_OPTIONS, type DateRange, type RangeKey } from "../lib/dateRange";
 
 export interface RangeStateProps {
   active: RangeKey;
@@ -37,13 +37,32 @@ function loadCycleDay(): number {
   return Number.isNaN(stored) ? 25 : Math.max(1, Math.min(31, stored));
 }
 
+// Reads the persisted active range, falling back to the user's timeDefault
+// tweak (stored in xarji-tweaks), then to the `fallback` param.
+// "Custom" is never persisted (dates are transient) — ignored on read.
+function loadActiveRange(fallback: RangeKey): RangeKey {
+  const persisted = localStorage.getItem("xarji-active-range") as RangeKey | null;
+  if (persisted && persisted !== "Custom" && RANGE_OPTIONS.includes(persisted)) return persisted;
+
+  try {
+    const tweaks = JSON.parse(localStorage.getItem("xarji-tweaks") ?? "{}") as Record<string, string>;
+    if (tweaks.timeDefault) {
+      const mapped = (tweaks.timeDefault.charAt(0).toUpperCase() + tweaks.timeDefault.slice(1)) as RangeKey;
+      if (RANGE_OPTIONS.includes(mapped)) return mapped;
+    }
+  } catch {
+    // corrupt tweaks — ignore
+  }
+  return fallback;
+}
+
 export function useRangeState(
   initial: RangeKey = "Month",
   options?: UseRangeStateOptions
 ): UseRangeStateResult {
   const customInitial = options?.customInitial;
   const useCustom = !!(customInitial && customInitial.start && customInitial.end);
-  const [active, setActive] = useState<RangeKey>(useCustom ? "Custom" : initial);
+  const [active, setActive] = useState<RangeKey>(useCustom ? "Custom" : loadActiveRange(initial));
   const [customStart, setCustomStart] = useState(useCustom ? customInitial!.start : "");
   const [customEnd, setCustomEnd] = useState(useCustom ? customInitial!.end : "");
   const [cycleDay, setCycleDay] = useState<number>(loadCycleDay);
@@ -61,8 +80,10 @@ export function useRangeState(
     props: {
       active,
       onRange: (k) => {
-        if (k === "Cycle") setCycleOffset(0);
-        setActive(k as RangeKey);
+        const key = k as RangeKey;
+        if (key === "Cycle") setCycleOffset(0);
+        if (key !== "Custom") localStorage.setItem("xarji-active-range", key);
+        setActive(key);
       },
       customStart,
       customEnd,

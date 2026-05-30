@@ -86,6 +86,11 @@ const schema = i.schema({
       // category renders in on /budgets and which formula it
       // contributes to in computeFlexPool. Optional so existing
       // pre-feature rows tolerate the schema migration.
+      // Manual display order for the By Category page. Lower values
+      // appear first. Set by drag-and-drop; optional so existing rows
+      // without an order fall back to spend-based sorting.
+      sortOrder: i.number().optional(),
+      viewHidden: i.boolean().optional(),
       bucket: i.string().optional(),
       // GEL. For Fixed categories: monthly target. For Non-Monthly:
       // total target across `frequencyMonths` (Phase 2 divides it).
