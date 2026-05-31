@@ -32,6 +32,9 @@ export interface InkTx {
    *  out of analytics. The actual filtering happens in the
    *  aggregator hooks; this is purely a display flag. */
   excludedFromAnalytics?: boolean;
+  /** Set on synthetic records created by the split-transaction UI.
+   *  Holds the transactionId of the original payment. */
+  splitFrom?: string;
 }
 
 export function TxRow({
@@ -147,6 +150,11 @@ export function TxRow({
           {isFx && (
             <Pill bg={T.panelAlt} color={T.muted}>
               {t.currency}
+            </Pill>
+          )}
+          {t.splitFrom && (
+            <Pill bg={T.panelAlt} color={T.muted}>
+              Split
             </Pill>
           )}
           {t.excludedFromAnalytics && (

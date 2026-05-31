@@ -25,6 +25,11 @@ const schema = i.schema({
       // and un-hide it. Optional / defaults to false for existing
       // rows that predate this field.
       excludedFromAnalytics: i.boolean().optional(),
+      // Set on synthetic split records created by the split-transaction
+      // UI. Holds the transactionId of the original payment this was
+      // split from. The original gets excludedFromAnalytics: true so it
+      // sits out of aggregates but stays visible in the ledger.
+      splitFrom: i.string().optional(),
     }),
     failedPayments: i.entity({
       transactionId: i.string().unique(),
@@ -208,6 +213,7 @@ export type Payment = {
   bankSenderId: string;
   rawMessage: string;
   excludedFromAnalytics?: boolean;
+  splitFrom?: string;
 };
 
 export type FailedPayment = {

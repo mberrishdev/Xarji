@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { id } from "@instantdb/react";
 import { db, type Payment } from "../lib/instant";
 import { groupBy, getDateGroup } from "../lib/utils";
 import { formatLocalDay } from "../ink/format";
@@ -100,6 +101,55 @@ export function useTransactionDelete() {
       const collection = kind === "payment" ? db.tx.payments : db.tx.credits;
       await db.transact(collection[instantId].delete());
     }
+  };
+}
+
+export function usePaymentAmountEdit() {
+  return async (id: string, amount: number): Promise<void> => {
+    await db.transact(db.tx.payments[id].update({ amount }));
+  };
+}
+
+export function usePaymentMerchantEdit() {
+  return async (id: string, merchant: string): Promise<void> => {
+    await db.transact(db.tx.payments[id].update({ merchant }));
+  };
+}
+
+/**
+ * Split a payment into N segments. Creates N new payment records with
+ * synthetic transactionIds and excludes the original so it sits out of
+ * analytics but stays visible in the ledger for audit. The original's
+ * SMS will never re-import as a duplicate because its transactionId
+ * stays in InstantDB (just with excludedFromAnalytics: true).
+ */
+export function useSplitTransaction() {
+  return async (
+    original: Payment,
+    segments: Array<{ amount: number; merchant?: string }>
+  ): Promise<void> => {
+    const now = Date.now();
+    await db.transact([
+      db.tx.payments[original.id].update({ excludedFromAnalytics: true }),
+      ...segments.map((seg, idx) =>
+        db.tx.payments[id()].update({
+          transactionId: `split:${original.transactionId}:${idx}:${now}`,
+          transactionType: original.transactionType,
+          amount: seg.amount,
+          currency: original.currency,
+          merchant: seg.merchant ?? original.merchant ?? "",
+          ...(original.cardLastDigits != null ? { cardLastDigits: original.cardLastDigits } : {}),
+          transactionDate: original.transactionDate,
+          messageTimestamp: original.messageTimestamp,
+          syncedAt: now,
+          bankSenderId: original.bankSenderId,
+          rawMessage: original.rawMessage,
+          splitFrom: original.transactionId,
+          ...(original.plusEarned != null ? { plusEarned: original.plusEarned } : {}),
+          ...(original.plusTotal != null ? { plusTotal: original.plusTotal } : {}),
+        })
+      ),
+    ]);
   };
 }
 
