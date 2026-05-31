@@ -13,6 +13,7 @@ import { previousRange, rangeFromKey, rangeToDateParams } from "../lib/dateRange
 import { formatCompact, formatLocalDay } from "../ink/format";
 import { type InkCategory } from "../lib/utils";
 import { useCategorizer } from "../hooks/useCategorizer";
+import { useCategories } from "../hooks/useCategories";
 import { isWithinInterval, endOfMonth, differenceInCalendarDays } from "date-fns";
 
 export function Dashboard() {
@@ -23,8 +24,12 @@ export function Dashboard() {
   const { range, props: rangeProps } = useRangeState("Month");
   const prevPeriod = useMemo(() => previousRange(range), [range]);
 
+  // stats.total = sum of all non-excluded payments in GEL for the selected range.
+  // stats.prevTotal = same sum for the equivalent prior period (used for MoM delta).
+  // stats.totalChange = ((current - prev) / prev) * 100 — % change vs prior period.
   const stats = useRangeStats(range);
   const topMerchants = useRangeTopMerchants(range, 5);
+
   // Today's spend tile is range-independent — the "quick glance how much
   // I spent today" use case is the whole point. Pin it to today/this-month
   // even when the user switches the page range to Week/Year/Cycle.
@@ -33,22 +38,42 @@ export function Dashboard() {
   const todayStats = useRangeStats(todayRange);
   const monthStatsForAvg = useRangeStats(monthRangeForAvg);
   const dayOfMonth = new Date().getDate();
+  // Daily average = total month-to-date spend ÷ days elapsed so far.
+  // Used in the Today tile to show "+12% vs avg" — not a forecast, just context.
   const monthDailyAvg = dayOfMonth > 0 ? monthStatsForAvg.total / dayOfMonth : 0;
   const trend = useMonthlyTrend(9);
   const { payments } = useConvertedPayments();
   const { failedPayments } = useFailedPayments();
   const { credits } = useCredits();
+  // monthCredits = all incoming transactions (salary, deposits) in the selected range,
+  // converted to GEL. Credits with excludedFromAnalytics=true are still included
+  // here — income is income even if you want to hide it from some views.
   const monthCredits = useRangeCredits(range);
   const prevMonthCredits = useRangeCredits(prevPeriod);
   const { getCategory } = useCategorizer();
+  const { categories: allCategories } = useCategories();
+  // totalTarget = sum of every category's monthly GEL limit (targetAmount).
+  // Only categories where the user has set a limit contribute. Used in the
+  // hero card to show "₾X remaining / ₾X over" against the selected range spend.
+  const totalTarget = useMemo(
+    () => allCategories.reduce((s, c) => s + (c.targetAmount ?? 0), 0),
+    [allCategories]
+  );
 
   const prevMonthName = prevPeriod.label;
   const prevMonthShort = prevPeriod.label.split(" ")[0]; // "Mar 2026" → "Mar", "Mar 1 – 31" → "Mar"
   const monthYearLabel = range.label;
-  const monthShortName = range.label.split(" ")[0].toUpperCase();
+  const monthShortName = range.key === "Cycle"
+    ? "CYCLE"
+    : range.label.split(" ")[0].toUpperCase();
+  // income = total GEL received this period (credits). net = what's left after spending.
   const income = monthCredits.total;
   const net = income - stats.total;
+  // Savings rate = net ÷ income. E.g. income ₾3000, spent ₾2100 → net ₾900 → 30% saved.
+  // Zero when no income recorded so we don't show a misleading negative rate.
   const savingsRate = income > 0 ? (net / income) * 100 : 0;
+  // Income change vs prior period. Null when prior period had no income (avoids ÷0).
+  // Positive = earned more this period; negative = earned less.
   const incomeChange =
     prevMonthCredits.total > 0
       ? ((income - prevMonthCredits.total) / prevMonthCredits.total) * 100
@@ -81,7 +106,9 @@ export function Dashboard() {
   }, [payments, getCategory, range]);
 
   const topCats = byCategory.slice(0, 5);
-  const totalCatSum = topCats.reduce((s, c) => s + c.total, 0) || 1;
+  // Denominator is all-categories total so percentages reflect actual
+  // share of total spend, not just share-of-top-5.
+  const totalCatSum = byCategory.reduce((s, c) => s + c.total, 0) || 1;
 
   // Recent transactions (payments + failed + credits mixed, newest first)
   const recent: InkTx[] = useMemo(() => {
@@ -137,6 +164,7 @@ export function Dashboard() {
     return combined.sort((a, b) => b.transactionDate - a.transactionDate).slice(0, 7);
   }, [payments, failedPayments, credits, getCategory]);
 
+  // positive = spending went UP vs prior period (costs more, shown in accent/red).
   const positive = stats.totalChange > 0;
   // Day count comes from the active range. For a Month-with-future-days the
   // range still extends to month-end, but the user has only "lived" up to
@@ -154,8 +182,12 @@ export function Dashboard() {
   const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
   const rangeTitle = `${range.label}, at a glance`;
 
+  // Split the total into integer + decimal parts so the decimal can be
+  // rendered smaller (e.g. "2 341" large, ".57" in 0.42em — avoids the
+  // hero number looking like a raw float).
   const monthShort = Math.round(stats.total).toLocaleString("en-US");
   const monthDecimals = stats.total.toFixed(2).split(".")[1];
+  // Absolute GEL delta vs prior period, rounded for display (e.g. "₾230 more than April").
   const momDeltaRound = Math.round(Math.abs(stats.total - stats.prevTotal));
 
   return (
@@ -257,6 +289,19 @@ export function Dashboard() {
               : ""}
             {dayNum} days · {stats.count} transactions
           </div>
+
+          {totalTarget > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
+              <span style={{ fontSize: 12, color: T.dim, fontFamily: T.mono }}>
+                Budget target: ₾{totalTarget.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+              </span>
+              <span style={{ fontSize: 12, color: stats.total > totalTarget ? T.accent : "#4BD9A2", fontFamily: T.mono, fontWeight: 700 }}>
+                {stats.total > totalTarget
+                  ? `↑ ₾${(stats.total - totalTarget).toLocaleString("en-US", { maximumFractionDigits: 0 })} over`
+                  : `₾${(totalTarget - stats.total).toLocaleString("en-US", { maximumFractionDigits: 0 })} remaining`}
+              </span>
+            </div>
+          )}
 
           <CashflowBar T={T} income={income} spent={stats.total} />
           {T.chartsVisible && trendData.length > 0 && (
@@ -512,6 +557,10 @@ export function Dashboard() {
 
 // Horizontal cashflow bar: visualises income → spent → net under the
 // hero number so "you spent" can't be mistaken for a balance.
+// Horizontal bar under the hero number showing spent (coral) + net/saved (green hatching).
+// scale = whichever is larger (income or spend) so the bar always fills 100% width —
+// if you earned more than you spent, income sets the scale and net fills the remainder;
+// if you overspent, spend sets the scale and the net segment collapses to 0.
 function CashflowBar({ T, income, spent }: { T: InkTheme; income: number; spent: number }) {
   const net = Math.max(0, income - spent);
   const scale = Math.max(income, spent, 1);
@@ -673,9 +722,9 @@ function TodaySpendCard({
   count: number;
   monthDailyAvg: number;
 }) {
-  // Comparison vs typical day this month — green if today is below the
-  // running average (good day), accent if above (heavier than usual).
-  // Suppressed when there's no average to compare against.
+  // delta = (today's spend − daily average) / daily average × 100.
+  // Green when today is >5% below average (light day), accent when >5% above.
+  // Suppressed when the average is too small to be meaningful (< ₾0.50/day).
   const hasAvg = monthDailyAvg > 0.5;
   const delta = hasAvg ? ((spend - monthDailyAvg) / monthDailyAvg) * 100 : null;
   const aboveAvg = delta !== null && delta > 5;
@@ -748,9 +797,9 @@ function IncomeCard({
   incomeChange: number | null;
   prevMonthShort: string;
 }) {
-  // Show up to 5 most-recent deposits in the timeline (oldest → newest in
-  // the design; we keep that order so the vertical green-bar opacity ramp
-  // reads as "history fills toward today").
+  // Show the 5 most-recent deposits in oldest→newest order so the green
+  // bar opacity ramp (faint past → bright present) reads as time flowing
+  // toward today. More than 5 would overflow the card height.
   const timeline = [...credits]
     .sort((a, b) => a.transactionDate - b.transactionDate)
     .slice(-5);
@@ -886,6 +935,9 @@ function NetCashflowCard({
   savingsRate: number;
   monthShortName: string;
 }) {
+  // net = income − spent. Positive means you saved money; negative means overspent.
+  // savingsRate = net ÷ income × 100 — the share of income you kept.
+  // The pill is hidden when income = 0 to avoid showing "−∞% saved".
   const positiveNet = net >= 0;
   return (
     <Card pad="18px 22px" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
