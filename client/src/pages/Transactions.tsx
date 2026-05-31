@@ -113,7 +113,7 @@ export function Transactions() {
       }
       return true;
     });
-  }, [allTx, bank, cat, kind, search, range]);
+  }, [allTx, bank, cat, kind, analytics, search, range]);
 
   const groups = useMemo(() => {
     const g: Record<string, InkTx[]> = {};
