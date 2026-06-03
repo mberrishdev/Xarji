@@ -4,6 +4,7 @@ import { Pill } from "./primitives";
 import { useCategorizer } from "../hooks/useCategorizer";
 import { CategoryPicker } from "../components/CategoryPicker";
 import { formatTime, currencySymbol } from "./format";
+import { useNbgRates } from "../hooks/useNbgRates";
 
 export interface InkTx {
   id: string;
@@ -53,6 +54,7 @@ export function TxRow({
   const T = useTheme();
   const vp = useViewport();
   const { getCategory } = useCategorizer();
+  const { convert } = useNbgRates();
   const cat = getCategory(t.merchant, t.rawMerchant, t.id);
   const failed = t.kind === "failed";
   const credit = t.kind === "credit";
@@ -277,26 +279,41 @@ export function TxRow({
             —
           </span>
         ) : (
-          <span
-            style={{
-              fontFamily: T.sans,
-              fontSize: 15,
-              color: credit ? T.green : T.text,
-              fontWeight: 700,
-              letterSpacing: -0.2,
-              fontVariantNumeric: "tabular-nums",
-              // Dim the amount on excluded rows so the user can tell
-              // at a glance the row isn't part of any total.
-              opacity: t.excludedFromAnalytics ? 0.5 : 1,
-              textDecoration: t.excludedFromAnalytics
-                ? "line-through"
-                : undefined,
-            }}
-          >
-            {credit ? "+" : "−"}
-            {symbol}
-            {(t.amount ?? 0).toFixed(2)}
-          </span>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 1 }}>
+            <span
+              style={{
+                fontFamily: T.sans,
+                fontSize: 15,
+                color: credit ? T.green : T.text,
+                fontWeight: 700,
+                letterSpacing: -0.2,
+                fontVariantNumeric: "tabular-nums",
+                opacity: t.excludedFromAnalytics ? 0.5 : 1,
+                textDecoration: t.excludedFromAnalytics ? "line-through" : undefined,
+              }}
+            >
+              {credit ? "+" : "−"}
+              {symbol}
+              {(t.amount ?? 0).toFixed(2)}
+            </span>
+            {isFx && t.amount != null && (() => {
+              const gel = convert(t.amount, t.currency);
+              if (gel == null) return null;
+              return (
+                <span
+                  style={{
+                    fontFamily: T.mono,
+                    fontSize: 10,
+                    color: T.dim,
+                    fontVariantNumeric: "tabular-nums",
+                    letterSpacing: 0.1,
+                  }}
+                >
+                  ≈ ₾{gel.toFixed(2)}
+                </span>
+              );
+            })()}
+          </div>
         )}
       </div>
     </div>

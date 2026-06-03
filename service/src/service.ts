@@ -110,6 +110,12 @@ export class ExpenseTrackerService {
           console.log(
             `[Service] Parsed ${success.length} transactions, ${failed.length} failed`
           );
+          if (failed.length > 0) {
+            console.log(`[Parser] ${failed.length} skipped from ${senderId} (marketing/OTP/self-transfer/unrecognised):`);
+            for (const msg of failed) {
+              console.log(`  id=${msg.messageId}: ${msg.text.slice(0, 80).replace(/\n/g, " ")}`);
+            }
+          }
 
           // Filter out already processed transactions
           const newTransactions = success.filter(
