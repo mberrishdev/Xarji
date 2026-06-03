@@ -222,7 +222,7 @@ export class ExpenseTrackerService {
   /**
    * Start watching for changes
    */
-  startWatching(): void {
+  startWatching(): boolean {
     console.log(`[Service] Starting file watcher for ${this.config.messagesDbPath}`);
 
     // Watch chat.db for changes
@@ -235,10 +235,13 @@ export class ExpenseTrackerService {
       });
 
       console.log("[Service] File watcher started");
+      return true;
     } catch (error) {
-      console.error("[Service] Failed to start file watcher:", error);
-      console.log("[Service] Falling back to polling mode");
+      // macOS blocks kernel-level watches on ~/Library/Messages/ even with FDA
+      const msg = error instanceof Error ? error.message : String(error);
+      console.warn(`[Service] File watcher unavailable (${msg}); using polling mode`);
       this.startPolling();
+      return false;
     }
   }
 
@@ -266,17 +269,21 @@ export class ExpenseTrackerService {
     const initial = await this.processNewMessages();
     console.log(`[Service] Initial sync complete: ${initial.synced} transactions`);
     if (initial.failures.length > 0) {
-      console.warn(`[Service] Initial sync had ${initial.failures.length} failure(s); cursor held for retry.`);
+      const details = initial.failures.map((f) => `${f.sender}/${f.target}: ${f.error}`).join("; ");
+      console.warn(`[Service] Initial sync had ${initial.failures.length} failure(s); cursor held for retry. (${details})`);
     }
 
-    // Start watching for changes
-    this.startWatching();
+    // Start watching for changes; returns false if fs.watch is blocked (macOS FDA restriction)
+    // and falls back to polling internally — in that case skip the redundant fallback interval.
+    const watcherStarted = this.startWatching();
 
-    // Also start a fallback poll (less frequent) in case file watching misses something
-    const fallbackInterval = this.config.pollIntervalMs * 5; // 5x slower than normal poll
-    setInterval(async () => {
-      await this.processNewMessages();
-    }, fallbackInterval);
+    if (watcherStarted) {
+      // Fallback poll in case file watching misses bursts
+      const fallbackInterval = this.config.pollIntervalMs * 5;
+      setInterval(async () => {
+        await this.processNewMessages();
+      }, fallbackInterval);
+    }
 
     console.log("[Service] SMS Expense Tracker service started");
     console.log(`[Service] Watching senders: ${this.config.bankSenderIds.join(", ")}`);
