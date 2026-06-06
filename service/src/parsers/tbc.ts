@@ -43,9 +43,13 @@ import {
 
 const BANK_KEY = "TBC";
 
-// ── Self-transfer guard ────────────────────────────────────────────────────
-// საკუთარ ანგარიშებზე / Sakutar angarishebze — skip entirely.
+// ── Explicitly-known non-transaction patterns (return "skip") ─────────────
+// Self-transfer: საკუთარ ანგარიშებზე / Sakutar angarishebze
 const RE_SELF = /(?:საკუთარ ანგარიშებზე|[Ss]akutar angarishebze)/;
+// OTP / security code: "TBC SMS Code:" or "TBC Code:"
+const RE_OTP = /\bCode:/i;
+// Currency conversion notification: კონვერტაცია / Konvertacia
+const RE_FX = /(?:კონვერტაცია|[Kk]onvertacia)/;
 
 // ── Incoming transfer (ჩარიცხვა / Charicxva: NNN CUR) ─────────────────────
 const RE_INCOMING = /(?:ჩარიცხვა|[Cc]haricxva):\s*([\d.,]+)\s*([A-Z]{3})/;
@@ -97,7 +101,7 @@ const RE_TANXA = /(?:თანხა|[Tt]anxa):\s*([\d.,]+)\s*([A-Z]{3})/;
 const RE_CARD_AMOUNT = /^\s*\)?\s*([\d.,]+)\s*([A-Z]{3})\s*$/m;
 
 // ── Card number extraction ─────────────────────────────────────────────────
-const RE_CARD_PARENS = /\(\s*\*{3,}'?(\d{3,4})'?\s*\)/;
+const RE_CARD_PARENS = /\(\s*\*+'?(\d{3,4})'?\s*\)/;
 const RE_CARD_STARS  = /\*{3,}(\d{3,4})/;
 
 // ── Balance (ნაშთი / Nashti: NNN CUR) ─────────────────────────────────────
@@ -107,6 +111,12 @@ const RE_BALANCE = /(?:ნაშთი|[Nn]ashti):\s*([\d.,]+)\s*([A-Z]{3})/;
 
 // ── Failure reason (მიზეზი / Mizezi: text) ───────────────────────────────
 const RE_REASON = /(?:მიზეზი|[Mm]izezi):\s*(.+)/i;
+
+// ── TBC loyalty cashback ──────────────────────────────────────────────────
+// "დაგიბრუნდა 5.06 GEL"              → plusEarned
+// "ერთგულ ყულაბაში გაქვს: 99.35 GEL" → plusTotal
+const RE_PLUS_EARNED = /დაგიბრუნდა\s+([\d.,]+)\s*GEL/;
+const RE_PLUS_TOTAL  = /ერთგულ ყულაბაში გაქვს:\s*([\d.,]+)\s*GEL/;
 
 // ── Loan source account (ანგარიშიდან / Angarishidan: accountName) ─────────
 const RE_SOURCE_ACCOUNT = /(?:ანგარიშიდან|[Aa]ngarishidan):\s*(.+?)(?:\s*$)/im;
@@ -158,7 +168,7 @@ function parseCard(text: string): string | null {
 function parseMerchantFromCard(text: string): string | null {
   const lines = text.trim().split(/\r?\n/).map(stripTrailingNoise).filter(Boolean);
   for (let i = 0; i < lines.length; i++) {
-    if (RE_CARD_STARS.test(lines[i])) {
+    if (parseCard(lines[i]) !== null) {
       // Multi-line: merchant is the next line after the card line.
       if (lines[i + 1] != null) return lines[i + 1];
       // Inline single-line shape: card-parens + merchant + date sit on the
@@ -200,6 +210,15 @@ function parseCounterpartyAfterDate(text: string): string | null {
   return tail;
 }
 
+function parsePlus(text: string): { earned: number | null; total: number | null } {
+  const e = text.match(RE_PLUS_EARNED);
+  const t = text.match(RE_PLUS_TOTAL);
+  return {
+    earned: e ? parseFlexibleAmount(e[1]) : null,
+    total:  t ? parseFlexibleAmount(t[1]) : null,
+  };
+}
+
 /** Loan source account from "ANGaRiShIdaN: <name>". */
 function parseLoanAccount(text: string): string | null {
   const m = text.match(RE_SOURCE_ACCOUNT);
@@ -216,9 +235,11 @@ function parseBillMerchant(text: string): string | null {
   return lines[2] ?? null;
 }
 
-function parse(raw: RawMessage): Transaction | null {
-  // Skip own-account transfers before any further processing.
-  if (RE_SELF.test(raw.text)) return null;
+function parse(raw: RawMessage): Transaction | "skip" | null {
+  // Explicitly-known non-transactions: cursor can safely advance past these.
+  if (RE_SELF.test(raw.text)) return "skip";
+  if (RE_OTP.test(raw.text))  return "skip";
+  if (RE_FX.test(raw.text))   return "skip";
 
   const text = raw.text;
   const detected = detect(text);
@@ -343,6 +364,7 @@ function parse(raw: RawMessage): Transaction | null {
   if (amount === null) return null;
 
   balance = balance ?? parseBalance(text);
+  const plus = parsePlus(text);
 
   return {
     id: generateTransactionId(raw.messageId, text),
@@ -364,8 +386,8 @@ function parse(raw: RawMessage): Transaction | null {
     rawMessage: raw.text,
     failureReason,
     balance,
-    plusEarned: null,
-    plusTotal: null,
+    plusEarned: plus.earned,
+    plusTotal: plus.total,
     counterparty,
   };
 }

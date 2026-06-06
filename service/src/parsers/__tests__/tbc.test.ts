@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { tbcParser } from "../tbc";
 import type { RawMessage } from "../../db-reader";
+import type { Transaction } from "../types";
 
 function mk(messageId: number, text: string): RawMessage {
   return {
@@ -9,6 +10,13 @@ function mk(messageId: number, text: string): RawMessage {
     timestamp: new Date("2026-04-21T12:00:00Z"),
     senderId: "TBC SMS",
   };
+}
+
+/** Narrow parse result to Transaction for tests that expect a transaction. */
+function parse(id: number, text: string): Transaction {
+  const r = tbcParser.parse(mk(id, text));
+  if (!r || r === "skip") throw new Error(`Expected Transaction, got ${r ?? "null"}`);
+  return r;
 }
 
 // ── Registration ───────────────────────────────────────────────────────────
@@ -40,7 +48,7 @@ describe("TBC parser — full loan repayment (სESxis dAFARVa:)", () => {
         "20/04/2026",
       ].join("\n")
     )
-  )!;
+  ) as Transaction;
 
   test("classified as loan repayment outgoing", () => {
     expect(tx.transactionType).toBe("loan_repayment");
@@ -78,7 +86,7 @@ describe("TBC parser — outgoing transfer (გAdaRicxVa:)", () => {
         "20/04/2026",
       ].join("\n")
     )
-  )!;
+  ) as Transaction;
 
   test("classified as transfer_out", () => {
     expect(tx.transactionType).toBe("transfer_out");
@@ -103,7 +111,7 @@ describe("TBC parser — outgoing transfer (გAdaRicxVa:)", () => {
           "LUKA MAISURADZE",
         ].join("\n")
       )
-    )!;
+    ) as Transaction;
     expect(t.transactionType).toBe("transfer_out");
     expect(t.counterparty).toBe("LUKA MAISURADZE");
     expect(t.merchant).toBe("LUKA MAISURADZE");
@@ -124,7 +132,7 @@ describe("TBC parser — declined card payment (sabarate operacia … uarYofiliA
         "APPLE.COM/BILL",
       ].join("\n")
     )
-  )!;
+  ) as Transaction;
 
   test("classified as failed payment", () => {
     expect(tx.transactionType).toBe("payment_failed");
@@ -160,7 +168,7 @@ describe("TBC parser — successful card payment", () => {
         "\u10DC\u10D0\u10E8\u10D7\u10D8: 2895.84 GEL",
       ].join("\n")
     )
-  )!;
+  ) as Transaction;
 
   test("classified as payment", () => {
     expect(tx.transactionType).toBe("payment");
@@ -190,7 +198,7 @@ describe("TBC parser — successful card payment", () => {
           "\u10D3\u10D0\u10D2\u10D8\u10D1\u10E0\u10E3\u10DC\u10D3\u10D0 0.20 GEL",
         ].join("\n")
       )
-    )!;
+    ) as Transaction;
     expect(t.transactionType).toBe("payment");
     expect(t.amount).toBe(9.9);
     expect(t.cardLastDigits).toBe("6582");
@@ -210,11 +218,32 @@ describe("TBC parser — successful card payment", () => {
           "\u10DC\u10D0\u10E8\u10D7\u10D8: 1208.38 GEL",
         ].join("\n")
       )
-    )!;
+    ) as Transaction;
     expect(t.transactionType).toBe("payment");
     expect(t.currency).toBe("USD");
     expect(t.amount).toBe(132);
     expect(t.merchant).toBe("Ryanair Head Office");
+  });
+
+  test("single-asterisk card format (*6582)", () => {
+    const t = tbcParser.parse(
+      mk(
+        354,
+        [
+          "7.24 GEL",
+          "(*6582)",
+          "GLOVOAPP",
+          "06/06/26 00:21",
+          "\u10DC\u10D0\u10E8\u10D7\u10D8: 3392.91 GEL",
+        ].join("\n")
+      )
+    ) as Transaction;
+    expect(t.transactionType).toBe("payment");
+    expect(t.amount).toBe(7.24);
+    expect(t.currency).toBe("GEL");
+    expect(t.cardLastDigits).toBe("6582");
+    expect(t.merchant).toBe("GLOVOAPP");
+    expect(t.balance).toBe(3392.91);
   });
 
   test("municipal transport tap — amount line starts with )", () => {
@@ -230,7 +259,7 @@ describe("TBC parser — successful card payment", () => {
           "\u10E8\u10D4\u10DC \u10D2\u10D0\u10D2\u10D8\u10D0\u10E5\u10E2\u10D8\u10E3\u10E0\u10D3\u10D0 90 \u10EC\u10E3\u10D7\u10D8\u10D0\u10DC\u10D8 transport",
         ].join("\n")
       )
-    )!;
+    ) as Transaction;
     expect(t.transactionType).toBe("payment");
     expect(t.amount).toBe(1);
     expect(t.currency).toBe("GEL");
@@ -253,7 +282,7 @@ describe("TBC parser — incoming transfer (ჩARicxVa:)", () => {
           "LUKA MAISURADZE",
         ].join("\n")
       )
-    )!;
+    ) as Transaction;
     expect(tx.transactionType).toBe("transfer_in");
     expect(tx.direction).toBe("in");
     expect(tx.amount).toBe(21448);
@@ -266,7 +295,7 @@ describe("TBC parser — incoming transfer (ჩARicxVa:)", () => {
         401,
         "\u10E9\u10D0\u10E0\u10D8\u10EA\u10EE\u10D5\u10D0: 21448.00 GEL\nVISA GOLD\n20/04/2026\nLUKA MAISURADZE\uFFFDiI "
       )
-    )!;
+    ) as Transaction;
     expect(tx.counterparty).toBe("LUKA MAISURADZE");
   });
 
@@ -276,7 +305,7 @@ describe("TBC parser — incoming transfer (ჩARicxVa:)", () => {
         402,
         "\u10E9\u10D0\u10E0\u10D8\u10EA\u10EE\u10D5\u10D0: 2250.00 GEL\nVISA GOLD\n02/04/2026"
       )
-    )!;
+    ) as Transaction;
     expect(tx.transactionType).toBe("transfer_in");
     expect(tx.direction).toBe("in");
     expect(tx.amount).toBe(2250);
@@ -299,7 +328,7 @@ describe("TBC parser — reversal (უKUGatareba:)", () => {
         "\u10DC\u10D0\u10E8\u10D7\u10D8: 2864.48 GEL",
       ].join("\n")
     )
-  )!;
+  ) as Transaction;
 
   test("classified as reversal, direction in", () => {
     expect(tx.transactionType).toBe("reversal");
@@ -329,7 +358,7 @@ describe("TBC parser — reversal (უKUGatareba:)", () => {
           "\u10DC\u10D0\u10E8\u10D7\u10D8: 2091.88 GEL",
         ].join("\n")
       )
-    )!;
+    ) as Transaction;
     expect(t.transactionType).toBe("reversal");
     expect(t.direction).toBe("in");
     expect(t.amount).toBe(54.62);
@@ -349,7 +378,7 @@ describe("TBC parser — reversal (უKUGatareba:)", () => {
           "\u10DC\u10D0\u10E8\u10D7\u10D8: 4.91 GEL",
         ].join("\n")
       )
-    )!;
+    ) as Transaction;
     expect(t.transactionType).toBe("reversal");
     expect(t.direction).toBe("in");
     expect(t.amount).toBe(4);
@@ -368,7 +397,7 @@ describe("TBC parser — reversal (უKUGatareba:)", () => {
         700,
         "\u10E3\u10D9\u10E3\u10D2\u10D0\u10E2\u10D0\u10E0\u10D4\u10D1\u10D0: 13.90 GEL TBC Concept 360 VISA Signature (***8058) BOLTTAXI 05/05/2026 17:25:01 \u10DC\u10D0\u10E8\u10D7\u10D8: 400.00 GEL"
       )
-    )!;
+    ) as Transaction;
     expect(t.transactionType).toBe("reversal");
     expect(t.direction).toBe("in");
     expect(t.status).toBe("success");
@@ -383,15 +412,15 @@ describe("TBC parser — reversal (უKUGatareba:)", () => {
 // ── Self-transfers ─────────────────────────────────────────────────────────
 
 describe("TBC parser — self-transfers (საKuTAr ANGaRiShebZe)", () => {
-  test("GEL self-transfer returns null", () => {
+  test('GEL self-transfer returns "skip"', () => {
     expect(
       tbcParser.parse(mk(700, "\u10E1\u10D0\u10D9\u10E3\u10D7\u10D0\u10E0 \u10D0\u10DC\u10D2\u10D0\u10E0\u10D8\u10E8\u10D4\u10D1\u10D6\u10D4 \u10D2\u10D0\u10D3\u10D0\u10E0\u10D8\u10EA\u10EE\u10D5\u10D0:\n1000.00 GEL\n02/02/2026"))
-    ).toBeNull();
+    ).toBe("skip");
   });
-  test("USD self-transfer returns null", () => {
+  test('USD self-transfer returns "skip"', () => {
     expect(
       tbcParser.parse(mk(701, "\u10E1\u10D0\u10D9\u10E3\u10D7\u10D0\u10E0 \u10D0\u10DC\u10D2\u10D0\u10E0\u10D8\u10E8\u10D4\u10D1\u10D6\u10D4 \u10D2\u10D0\u10D3\u10D0\u10E0\u10D8\u10EA\u10EE\u10D5\u10D0:\n74854.64 USD\n24/04/2026"))
-    ).toBeNull();
+    ).toBe("skip");
   });
 });
 
@@ -410,7 +439,7 @@ describe("TBC parser — bill payment (გAdaXda:)", () => {
           "\u10E8\u10D4\u10E5\u10DB\u10DC\u10D8\u10E1 \u10D7\u10D0\u10E0\u10D8\u10E6\u10D8: 24/04/2026 20:33:47",
         ].join("\n")
       )
-    )!;
+    ) as Transaction;
     expect(tx.transactionType).toBe("transfer_out");
     expect(tx.direction).toBe("out");
     expect(tx.amount).toBe(20);
@@ -430,7 +459,7 @@ describe("TBC parser — bill payment (გAdaXda:)", () => {
           "\u10E8\u10D4\u10E5\u10DB\u10DC\u10D8\u10E1 \u10D7\u10D0\u10E0\u10D8\u10E6\u10D8: 24/04/2026 20:33:47",
         ].join("\n")
       )
-    )!;
+    ) as Transaction;
     expect(tx.transactionType).toBe("transfer_out");
     expect(tx.amount).toBe(50);
     expect(tx.merchant).toBe("Tbilisi Energy");
@@ -452,7 +481,7 @@ describe("TBC parser — mobile top-up (მobIlURIs ShEvSeba:)", () => {
           "\u10E8\u10D4\u10E5\u10DB\u10DC\u10D8\u10E1 \u10D7\u10D0\u10E0\u10D8\u10E6\u10D8: 24/04/2026 15:46:57",
         ].join("\n")
       )
-    )!;
+    ) as Transaction;
     expect(tx.transactionType).toBe("transfer_out");
     expect(tx.direction).toBe("out");
     expect(tx.amount).toBe(10);
@@ -476,7 +505,7 @@ describe("TBC parser — scheduled auto-transfer (AvtomATUri GAdaRicXVa)", () =>
           "01/12/2024",
         ].join("\n")
       )
-    )!;
+    ) as Transaction;
     expect(tx.transactionType).toBe("transfer_out");
     expect(tx.direction).toBe("out");
     expect(tx.amount).toBe(5);
@@ -500,7 +529,7 @@ describe("TBC parser — cash deposit (naGDI fulis SheTaNa:)", () => {
           "\u10D2\u10DB\u10D0\u10D3\u10DA\u10DD\u10D1\u10D7",
         ].join("\n")
       )
-    )!;
+    ) as Transaction;
     expect(tx.transactionType).toBe("deposit");
     expect(tx.direction).toBe("in");
     expect(tx.status).toBe("success");
@@ -524,7 +553,7 @@ describe("TBC parser — ATM withdrawal (TaNXIs GaNaGdeba:)", () => {
           "\u10D2\u10DB\u10D0\u10D3\u10DA\u10DD\u10D1\u10D7",
         ].join("\n")
       )
-    )!;
+    ) as Transaction;
     expect(tx.transactionType).toBe("atm_withdrawal");
     expect(tx.direction).toBe("out");
     expect(tx.amount).toBe(200);
@@ -543,7 +572,7 @@ describe("TBC parser — ATM withdrawal (TaNXIs GaNaGdeba:)", () => {
           "\u10D2\u10DB\u10D0\u10D3\u10DA\u10DD\u10D1\u10D7",
         ].join("\n")
       )
-    )!;
+    ) as Transaction;
     expect(tx.transactionType).toBe("atm_withdrawal");
     expect(tx.amount).toBe(200);
     expect(tx.currency).toBe("USD");
@@ -553,14 +582,14 @@ describe("TBC parser — ATM withdrawal (TaNXIs GaNaGdeba:)", () => {
 // ── Silently skipped ──────────────────────────────────────────────────────
 
 describe("TBC parser — silently skipped messages", () => {
-  test("OTP code returns null", () => {
-    expect(tbcParser.parse(mk(500, "TBC SMS Code: 6700\nDartsmundi, rom kodi shegyavs: https://tbconline.ge"))).toBeNull();
+  test('OTP code returns "skip"', () => {
+    expect(tbcParser.parse(mk(500, "TBC SMS Code: 6700\nDartsmundi, rom kodi shegyavs: https://tbconline.ge"))).toBe("skip");
   });
-  test("marketing loyalty points notification returns null", () => {
+  test("marketing loyalty points notification returns null (unrecognised)", () => {
     expect(tbcParser.parse(mk(501, "\u10DB\u10D8\u10EE\u10D4\u10D8\u10DA,  \u10D2\u10DA\u10DD\u10D5\u10DD-\u10E8\u10D8 \u10D2\u10D0\u10DC\u10EE\u10DD\u10E0\u10EA\u10D8\u10D4\u10DA\u10D4\u10D1\u10E3\u10DA \n18.26-\u10DA\u10D0\u10E0\u10D8\u10D0\u10DC \u10E8\u10D4\u10DC\u10D0\u10eb\u10D4\u10DC\u10D6\u10D4"))).toBeNull();
   });
-  test("currency conversion returns null", () => {
-    expect(tbcParser.parse(mk(502, "\u10D9\u10DD\u10DC\u10D5\u10D4\u10E0\u10E2\u10D0\u10EA\u10D8\u10D0:\n2540.80 GEL\n800.00 EUR\n\u10D9\u10E3\u10E0\u10E1\u10D8: 3.176\n24/04/2026"))).toBeNull();
+  test('currency conversion returns "skip"', () => {
+    expect(tbcParser.parse(mk(502, "\u10D9\u10DD\u10DC\u10D5\u10D4\u10E0\u10E2\u10D0\u10EA\u10D8\u10D0:\n2540.80 GEL\n800.00 EUR\n\u10D9\u10E3\u10E0\u10E1\u10D8: 3.176\n24/04/2026"))).toBe("skip");
   });
   test("fully irrelevant text returns null", () => {
     expect(tbcParser.parse(mk(503, "zzz"))).toBeNull();
@@ -572,7 +601,7 @@ describe("TBC parser — silently skipped messages", () => {
 describe("TBC parser — invariants", () => {
   const tx = tbcParser.parse(
     mk(9000, "\u10E9\u10D0\u10E0\u10D8\u10EA\u10EE\u10D5\u10D0: 1.00 GEL\nVISA GOLD\n01/01/2026")
-  )!;
+  ) as Transaction;
 
   test("bankKey is TBC regardless of raw sender id", () => {
     expect(tx.bankKey).toBe("TBC");
@@ -605,7 +634,7 @@ describe("TBC parser — Latin transliteration", () => {
           "05/05/2026",
         ].join("\n")
       )
-    )!;
+    ) as Transaction;
     expect(tx).not.toBeNull();
     expect(tx.transactionType).toBe("transfer_in");
     expect(tx.direction).toBe("in");
@@ -630,7 +659,7 @@ describe("TBC parser — Latin transliteration", () => {
           "TBC CARD",
         ].join("\n")
       )
-    )!;
+    ) as Transaction;
     expect(tx).not.toBeNull();
     expect(tx.transactionType).toBe("transfer_out");
     expect(tx.direction).toBe("out");
@@ -640,14 +669,14 @@ describe("TBC parser — Latin transliteration", () => {
     expect(tx.merchant).toBe("TBC CARD");
   });
 
-  test("self-transfer (Sakutar angarishebze) is skipped", () => {
+  test('self-transfer (Sakutar angarishebze) returns "skip"', () => {
     const tx = tbcParser.parse(
       mk(
         902,
         "Sakutar angarishebze gadaricxva: 6357.00 GEL 05/05/2026"
       )
     );
-    expect(tx).toBeNull();
+    expect(tx).toBe("skip");
   });
 
   test("mobile top-up (Mobiluris shevseba) classifies as transfer_out", () => {
@@ -665,7 +694,7 @@ describe("TBC parser — Latin transliteration", () => {
           "Sheqmnis tarigi: 05/05/2026 15:47:36",
         ].join("\n")
       )
-    )!;
+    ) as Transaction;
     expect(tx).not.toBeNull();
     expect(tx.transactionType).toBe("transfer_out");
     expect(tx.direction).toBe("out");
@@ -684,7 +713,7 @@ describe("TBC parser — Latin transliteration", () => {
         904,
         "Ukugatareba: 13.90 GEL TBC Concept 360 VISA Signature (***8058) BOLTTAXI 05/05/2026 17:25:01 nashti: 400.00 GEL"
       )
-    )!;
+    ) as Transaction;
     expect(tx).not.toBeNull();
     expect(tx.transactionType).toBe("reversal");
     expect(tx.direction).toBe("in");
@@ -709,7 +738,7 @@ describe("TBC parser — Latin transliteration", () => {
           "Nashti: 400.00 GEL",
         ].join("\n")
       )
-    )!;
+    ) as Transaction;
     expect(tx).not.toBeNull();
     expect(tx.transactionType).toBe("reversal");
     expect(tx.direction).toBe("in");
@@ -727,7 +756,7 @@ describe("TBC parser — Latin transliteration", () => {
           "Tanxa: 500.00 GEL",
         ].join("\n")
       )
-    )!;
+    ) as Transaction;
     expect(tx).not.toBeNull();
     expect(tx.transactionType).toBe("atm_withdrawal");
     expect(tx.direction).toBe("out");
@@ -745,7 +774,7 @@ describe("TBC parser — Latin transliteration", () => {
           "05/05/2026",
         ].join("\n")
       )
-    )!;
+    ) as Transaction;
     expect(tx).not.toBeNull();
     expect(tx.transactionType).toBe("deposit");
     expect(tx.direction).toBe("in");
@@ -767,7 +796,7 @@ describe("TBC parser — Latin transliteration", () => {
           "05/05/2026",
         ].join("\n")
       )
-    )!;
+    ) as Transaction;
     expect(tx).not.toBeNull();
     expect(tx.transactionType).toBe("transfer_out");
     expect(tx.amount).toBe(50);
@@ -778,18 +807,16 @@ describe("TBC parser — Latin transliteration", () => {
     // 5-line layout mirroring the existing Georgian TELMICO test:
     // header / amount / merchant / ID:NNN / date. parseBillMerchant
     // returns lines[2] (the merchant).
-    const tx = tbcParser.parse(
-      mk(
-        909,
-        [
-          "Gadakhda:",
-          "75.00 GEL",
-          "Magti",
-          "ID:5802811",
-          "Sheqmnis tarigi: 05/05/2026 12:00:00",
-        ].join("\n")
-      )
-    )!;
+    const tx = parse(
+      909,
+      [
+        "Gadakhda:",
+        "75.00 GEL",
+        "Magti",
+        "ID:5802811",
+        "Sheqmnis tarigi: 05/05/2026 12:00:00",
+      ].join("\n")
+    );
     expect(tx).not.toBeNull();
     expect(tx.transactionType).toBe("transfer_out");
     expect(tx.amount).toBe(75);
@@ -812,7 +839,7 @@ describe("TBC parser — Latin transliteration", () => {
           "MERCHANT.NAME",
         ].join("\n")
       )
-    )!;
+    ) as Transaction;
     expect(tx).not.toBeNull();
     expect(tx.transactionType).toBe("payment_failed");
     expect(tx.status).toBe("failed");
@@ -823,18 +850,16 @@ describe("TBC parser — Latin transliteration", () => {
   });
 
   test("loan repayment (Sesxis dapharva)", () => {
-    const tx = tbcParser.parse(
-      mk(
-        911,
-        [
-          "Sesxis dapharva: 250.00 GEL",
-          "Personal loan",
-          "Angarishidan: Current",
-          "Sesxis nashti: 1500.00 GEL",
-          "05/05/2026",
-        ].join("\n")
-      )
-    )!;
+    const tx = parse(
+      911,
+      [
+        "Sesxis dapharva: 250.00 GEL",
+        "Personal loan",
+        "Angarishidan: Current",
+        "Sesxis nashti: 1500.00 GEL",
+        "05/05/2026",
+      ].join("\n")
+    );
     expect(tx).not.toBeNull();
     expect(tx.transactionType).toBe("loan_repayment");
     expect(tx.direction).toBe("out");
@@ -848,18 +873,16 @@ describe("TBC parser — Latin transliteration", () => {
     // doesn't require a header keyword. Test pinned here to make sure
     // nothing regresses — including that balance still extracts from
     // the Latin "Nashti:" form.
-    const tx = tbcParser.parse(
-      mk(
-        912,
-        [
-          "46.82 GEL",
-          "TBC Concept 360 MC World elite (***7940)",
-          "Wolt",
-          "06/05/2026 14:12:50",
-          "Nashti: 4565.73 GEL",
-        ].join("\n")
-      )
-    )!;
+    const tx = parse(
+      912,
+      [
+        "46.82 GEL",
+        "TBC Concept 360 MC World elite (***7940)",
+        "Wolt",
+        "06/05/2026 14:12:50",
+        "Nashti: 4565.73 GEL",
+      ].join("\n")
+    );
     expect(tx).not.toBeNull();
     expect(tx.transactionType).toBe("payment");
     expect(tx.amount).toBe(46.82);

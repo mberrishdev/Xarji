@@ -29,16 +29,18 @@ describe("parser registry", () => {
 
 describe("parseMessage router", () => {
   test("SOLO message routed through SOLO parser", () => {
-    const tx = parseMessage(
+    const result = parseMessage(
       mk("SOLO", ["გადახდა: GEL1.00", "Card:***1234", "Shop", "01.01.2026"].join("\n"))
-    )!;
+    );
+    const tx = result as import("../types").Transaction;
     expect(tx.bankKey).toBe("SOLO");
     expect(tx.transactionType).toBe("payment");
   });
 
   test("TBC SMS message routed through TBC parser", () => {
     // \u10E9\u10D0\u10E0\u10D8\u10EA\u10EE\u10D5\u10D0 = ჩარიცხვა (incoming transfer)
-    const tx = parseMessage(mk("TBC SMS", "\u10E9\u10D0\u10E0\u10D8\u10EA\u10EE\u10D5\u10D0: 1.00 GEL\nCurrent\n01/01/2026"))!;
+    const result = parseMessage(mk("TBC SMS", "\u10E9\u10D0\u10E0\u10D8\u10EA\u10EE\u10D5\u10D0: 1.00 GEL\nCurrent\n01/01/2026"));
+    const tx = result as import("../types").Transaction;
     expect(tx.bankKey).toBe("TBC");
     expect(tx.transactionType).toBe("transfer_in");
   });

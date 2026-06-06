@@ -18,6 +18,8 @@ export function Settings() {
 
   const [confirm, setConfirm] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [backfilling, setBackfilling] = useState(false);
+  const [backfillResult, setBackfillResult] = useState<{ synced: number } | { error: string } | null>(null);
   // `null` before the first sync; otherwise the last result. Failures are
   // an array of `{ target, error }` so the hint can show "instantdb: …"
   // instead of just a count that overstates how much actually landed.
@@ -49,6 +51,25 @@ export function Settings() {
       setLastSync({ kind: "error", message });
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const handleBackfill = async () => {
+    setBackfilling(true);
+    setBackfillResult(null);
+    try {
+      const res = await fetch("/api/backfill", { method: "POST" });
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        setBackfillResult({ error: text || `HTTP ${res.status}` });
+        return;
+      }
+      const body = (await res.json()) as { synced: number };
+      setBackfillResult({ synced: body.synced });
+    } catch (err) {
+      setBackfillResult({ error: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setBackfilling(false);
     }
   };
 
@@ -335,7 +356,7 @@ export function Settings() {
               </div>
             ))}
           </div>
-          <div style={{ marginTop: 14 }}>
+          <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 10 }}>
             <Row label="Sync now" hint={syncHint}>
               <button
                 type="button"
@@ -355,6 +376,36 @@ export function Settings() {
                 }}
               >
                 {syncing ? "Syncing…" : "Sync"}
+              </button>
+            </Row>
+            <Row
+              label="Resync all"
+              hint={
+                backfillResult === null
+                  ? "Re-process every SMS from the beginning — recovers transactions skipped by old parser versions"
+                  : "error" in backfillResult
+                  ? `Failed: ${backfillResult.error}`
+                  : `Done — ${backfillResult.synced} new transaction${backfillResult.synced === 1 ? "" : "s"} imported`
+              }
+            >
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={backfilling ? undefined : handleBackfill}
+                style={{
+                  padding: "9px 16px",
+                  borderRadius: 10,
+                  border: `1px solid ${T.line}`,
+                  background: T.panelAlt,
+                  color: backfilling ? T.muted : T.text,
+                  fontSize: 12.5,
+                  fontWeight: 600,
+                  fontFamily: T.sans,
+                  cursor: backfilling ? "default" : "pointer",
+                  opacity: backfilling ? 0.7 : 1,
+                }}
+              >
+                {backfilling ? "Resyncing…" : "Resync all"}
               </button>
             </Row>
           </div>

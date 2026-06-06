@@ -27,7 +27,7 @@ for (const s of allSenders) {
   for (const raw of msgs) {
     if (raw.timestamp.getTime() < monthStart || raw.timestamp.getTime() >= monthEnd) continue;
     const tx = parseMessage(raw);
-    if (!tx || tx.amount === null) continue;
+    if (!tx || tx === "skip" || tx.amount === null) continue;
     rows.push({
       bank: tx.bankKey,
       kind: tx.transactionType,

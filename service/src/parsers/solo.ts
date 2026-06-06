@@ -13,9 +13,13 @@
  *   - Debt overdue notices            (`…ვადაგადაცილებული დავალიანება…`)
  *   - Debt reminders                  (`სესხზე გერიცხებათ დავალიანება:`)
  *   - Upcoming-loan-payment reminders (`…მომდევნო თვეში გადასახდელია…`)
- *   - Self-transfer between own accts (`საკუთარ ანგარიშზე გადარიცხვა:`) —
- *     these just shuffle money between the user's own accounts and would
- *     double-count if treated as spending or income.
+ *   - Self-transfer between own accts (`საკუთარ ანგარიშზე გადარიცხვა:`)
+ *   - Marketing / promotional SMS       (`შეთავაზება`, `შეიძინეთ`, …)
+ *   - Card expiry notices               (`ამოეწურა`)
+ *   - Internet-banking login alerts     (`ინტერნეტბანკ`)
+ *   - OTP confirmation prompts          (`კოდი შეგყავს`)
+ *   - Savings/investment summaries      (`ელექტრონული ყულაბი`, `ინვესტირებული`)
+ *   - Referral invitations              (`მეგობრის მოწვევა`)
  */
 
 import type { RawMessage } from "../db-reader";
@@ -56,13 +60,6 @@ interface DetectedKind {
 }
 
 function detect(text: string): DetectedKind | null {
-  // Notification-only messages — always skip.
-  if (text.includes("ვადაგადაცილებული დავალიანება")) return null;
-  if (/სესხზე გერიცხებათ დავალიანება:/.test(text)) return null;
-  if (/მომდევნო თვეში გადასახდელია/.test(text)) return null;
-  // Self-transfer — real movement but between user's own accounts,
-  // would double-count if treated as income or spending. Skip.
-  if (/საკუთარ ანგარიშზე გადარიცხვა:/.test(text)) return null;
 
   if (text.includes("გადახდა ვერ შესრულდა")) {
     return { kind: "payment_failed", status: "failed" };
@@ -160,8 +157,18 @@ function parseCard(text: string): string | null {
   return m ? m[1] : null;
 }
 
-function parse(raw: RawMessage): Transaction | null {
+// Known non-transaction message patterns — marketing, alerts, notifications.
+const RE_SOLO_SKIP = /შეთავაზება|ამოეწურა|ინტერნეტბანკ|კოდი შეგყავს|ელექტრონული ყულაბი|მეგობრის მოწვევა|ინვესტირებული|განახლდა .+დათვლის წესი/;
+
+function parse(raw: RawMessage): Transaction | "skip" | null {
   const text = raw.text;
+  // Explicitly-known non-transactions: cursor can safely advance past these.
+  if (text.includes("ვადაგადაცილებული დავალიანება")) return "skip";
+  if (/სესხზე გერიცხებათ დავალიანება:/.test(text)) return "skip";
+  if (/მომდევნო თვეში გადასახდელია/.test(text)) return "skip";
+  if (/საკუთარ ანგარიშზე გადარიცხვა:/.test(text)) return "skip";
+  if (RE_SOLO_SKIP.test(text)) return "skip";
+
   const detected = detect(text);
   if (!detected) return null;
 

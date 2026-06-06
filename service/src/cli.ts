@@ -380,6 +380,27 @@ async function configureWebhook(url: string): Promise<void> {
 }
 
 /**
+ * Reset cursors so the service re-processes old messages on next start.
+ * Safe: isProcessed() + InstantDB dedup prevent double-syncing of already-
+ * processed transactions; only newly-parseable messages will be newly synced.
+ */
+async function backfill(senderId?: string, fromId: number = 0): Promise<void> {
+  console.log("xarji backfill\n");
+
+  try {
+    const stateDb = new StateDb();
+    const label = senderId ? `sender "${senderId}"` : "all senders";
+    stateDb.resetCursor(senderId, fromId);
+    stateDb.close();
+    console.log(`✓ Cursor reset to message ID ${fromId} for ${label}.`);
+    console.log("\nRestart xarji (or the dev service) to re-process messages.");
+    console.log("Already-synced transactions will be skipped via dedup.");
+  } catch (err) {
+    console.error("Error:", err);
+  }
+}
+
+/**
  * Configure InstantDB
  */
 async function configureInstantDB(appId: string, adminToken: string): Promise<void> {
@@ -440,13 +461,19 @@ switch (command) {
     }
     break;
 
+  case "backfill":
+    // bun run src/cli.ts backfill [sender_id] [from_message_id]
+    await backfill(args[1], args[2] ? parseInt(args[2], 10) : 0);
+    break;
+
   default:
     console.log("xarji CLI\n");
     console.log("Usage:");
-    console.log("  bun run src/cli.ts install                         Interactive setup wizard");
-    console.log("  bun run src/cli.ts uninstall                       Remove the service");
-    console.log("  bun run src/cli.ts status                          Show service status");
-    console.log("  bun run src/cli.ts test                            Test message parsing");
-    console.log("  bun run src/cli.ts set-webhook <url>               Configure webhook URL");
-    console.log("  bun run src/cli.ts set-instantdb <app-id> <token>  Configure InstantDB");
+    console.log("  bun run src/cli.ts install                              Interactive setup wizard");
+    console.log("  bun run src/cli.ts uninstall                            Remove the service");
+    console.log("  bun run src/cli.ts status                               Show service status");
+    console.log("  bun run src/cli.ts test                                 Test message parsing");
+    console.log("  bun run src/cli.ts set-webhook <url>                    Configure webhook URL");
+    console.log("  bun run src/cli.ts set-instantdb <app-id> <token>       Configure InstantDB");
+    console.log("  bun run src/cli.ts backfill [sender] [from_msg_id]      Re-process skipped messages");
 }

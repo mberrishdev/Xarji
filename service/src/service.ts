@@ -105,16 +105,30 @@ export class ExpenseTrackerService {
           console.log(`[Service] Found ${messages.length} new messages from ${senderId}`);
 
           // Parse messages
-          const { success, failed } = parseMessages(messages);
+          const { success, skipped, failed } = parseMessages(messages);
 
           console.log(
-            `[Service] Parsed ${success.length} transactions, ${failed.length} failed`
+            `[Service] Parsed ${success.length} transactions, ${skipped.length} skipped (OTP/marketing/self-transfer), ${failed.length} unrecognised`
           );
           if (failed.length > 0) {
-            console.log(`[Parser] ${failed.length} skipped from ${senderId} (marketing/OTP/self-transfer/unrecognised):`);
-            for (const msg of failed) {
+            const preview = failed.slice(0, 3);
+            const more = failed.length > 3 ? ` (+ ${failed.length - 3} more)` : "";
+            console.log(`[Parser] ${failed.length} unrecognised from ${senderId} — cursor held${more}:`);
+            for (const msg of preview) {
               console.log(`  id=${msg.messageId}: ${msg.text.slice(0, 80).replace(/\n/g, " ")}`);
             }
+          }
+
+          // Compute how far the cursor can safely advance.
+          // Walk messages in ID order: stop at the first unrecognised (failed)
+          // message so a future parser upgrade can pick it up retroactively.
+          // Parsed transactions and explicit "skip" results both count as safe.
+          const failedIds = new Set(failed.map((m) => m.messageId));
+          const sortedIds = [...messages].sort((a, b) => a.messageId - b.messageId);
+          let newCursor = lastMessageId;
+          for (const msg of sortedIds) {
+            if (failedIds.has(msg.messageId)) break;
+            newCursor = msg.messageId;
           }
 
           // Filter out already processed transactions
@@ -123,19 +137,11 @@ export class ExpenseTrackerService {
           );
 
           if (newTransactions.length === 0) {
-            // Nothing parsed in this batch. Advance last_message_id ONLY if we
-            // know we've seen these messages before (any parsed at all this
-            // run). Otherwise leave it pinned so that adding a new parser
-            // later can retroactively pick up old messages.
-            //
-            // Note: we also de-dup via `isProcessed`, so any already-parsed
-            // transaction won't be written twice even if we re-fetch it.
-            if (success.length > 0) {
-              const maxParsedId = Math.max(...success.map((tx) => tx.messageId));
-              this.stateDb!.updateSyncState(senderId, maxParsedId);
-            } else {
+            if (newCursor > lastMessageId) {
+              this.stateDb!.updateSyncState(senderId, newCursor);
+            } else if (failed.length === messages.length) {
               console.log(
-                `[Service] ${senderId}: no parseable messages in this batch — leaving last_message_id at ${lastMessageId} so a future parser upgrade can retry.`
+                `[Service] ${senderId}: all ${messages.length} message(s) unrecognised — leaving cursor at ${lastMessageId} so a future parser upgrade can retry.`
               );
             }
             continue;
@@ -193,13 +199,10 @@ export class ExpenseTrackerService {
             console.log(`[Service] Synced ${syncResults.instantdb.syncedCount} to InstantDB`);
           }
 
-          // Advance last_message_id to the highest message ID we successfully
-          // parsed. We intentionally do NOT jump to `max(messages.map(m => m.messageId))`
-          // even though those messages are newer — if the parser can't handle
-          // them today, advancing would permanently skip them after a future
-          // parser upgrade.
-          const maxParsedId = Math.max(...success.map((tx) => tx.messageId));
-          this.stateDb!.updateSyncState(senderId, maxParsedId);
+          // Advance cursor to the highest consecutive-safe position: stops
+          // before the first unrecognised message so future parser upgrades
+          // can retroactively pick it up.
+          this.stateDb!.updateSyncState(senderId, newCursor);
 
           totalNewTransactions += newTransactions.length;
 
@@ -262,6 +265,18 @@ export class ExpenseTrackerService {
     this.pollInterval = setInterval(async () => {
       await this.processNewMessages();
     }, this.config.pollIntervalMs);
+  }
+
+  /**
+   * Reset all cursors to fromId (default 0) then immediately re-process.
+   * Safe: isProcessed() + InstantDB dedup prevent double-syncing of rows
+   * that are already in the database — only newly-parseable messages land.
+   */
+  async backfill(fromId: number = 0): Promise<SyncOutcome> {
+    if (!this.stateDb) throw new Error("Service not initialised");
+    console.log(`[Service] Backfill: resetting all cursors to ${fromId}`);
+    this.stateDb.resetCursor(undefined, fromId);
+    return this.processNewMessages();
   }
 
   /**

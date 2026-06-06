@@ -35,28 +35,33 @@ export function allBanks(): readonly BankParser[] {
 }
 
 /**
- * Parse a single raw message. Returns null for messages that don't match
- * any registered parser's recognised kinds (marketing, codes, notices, …).
+ * Parse a single raw message.
+ * Returns "skip" for explicitly recognised non-transactions (OTP, marketing,
+ * self-transfer), null for unrecognised formats, Transaction otherwise.
  */
-export function parseMessage(raw: RawMessage): Transaction | null {
+export function parseMessage(raw: RawMessage): Transaction | "skip" | null {
   const parser = getParserForSender(raw.senderId);
   if (!parser) return null;
   return parser.parse(raw);
 }
 
 /**
- * Bulk parse. Messages that fail routing *or* per-bank parsing are collected
- * into `failed` so callers can log them for diagnosis.
+ * Bulk parse.
+ * - success: parseable transactions
+ * - skipped: known non-transactions (OTP/marketing/self-transfer) — cursor safe to advance
+ * - failed:  unrecognised formats — cursor must stop before the first of these
  */
 export function parseMessages(messages: readonly RawMessage[]): ParseResult {
   const success: Transaction[] = [];
+  const skipped: RawMessage[] = [];
   const failed: RawMessage[] = [];
   for (const msg of messages) {
-    const tx = parseMessage(msg);
-    if (tx) success.push(tx);
-    else failed.push(msg);
+    const result = parseMessage(msg);
+    if (result === "skip") skipped.push(msg);
+    else if (result === null) failed.push(msg);
+    else success.push(result);
   }
-  return { success, failed };
+  return { success, skipped, failed };
 }
 
 export function filterByStatus(

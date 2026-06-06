@@ -46,6 +46,11 @@ export interface Transaction {
 
 export interface ParseResult {
   success: Transaction[];
+  /** Explicitly recognised non-transactions (OTP, marketing, self-transfer).
+   *  The cursor is allowed to advance past these. */
+  skipped: RawMessage[];
+  /** Unrecognised format — parser returned null. Cursor stops before the
+   *  first of these so a future parser upgrade can retroactively pick them up. */
   failed: RawMessage[];
 }
 
@@ -55,11 +60,18 @@ export interface ParseResult {
  *
  * Adding a new bank = write a new module that exports a BankParser and
  * register it in `parsers/index.ts`.
+ *
+ * Return semantics:
+ *   Transaction — parsed successfully, sync it and advance cursor.
+ *   "skip"      — message is a known non-transaction (OTP, marketing,
+ *                 self-transfer). Cursor advances past it; nothing synced.
+ *   null        — format not recognised. Cursor stops before this message
+ *                 so a future parser upgrade can pick it up.
  */
 export interface BankParser {
   bankKey: string;
   senderIds: readonly string[];
-  parse(raw: RawMessage): Transaction | null;
+  parse(raw: RawMessage): Transaction | "skip" | null;
 }
 
 export function directionOf(kind: TransactionKind): TransactionDirection {

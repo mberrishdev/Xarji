@@ -379,6 +379,13 @@ export function startHttpServer(opts: HttpServerOptions): HttpServerHandle {
         const outcome = await opts.service.processNewMessages();
         return json(outcome);
       }
+      if (path === "/api/backfill" && req.method === "POST") {
+        const csrf = assertSafeOrigin(req);
+        if (csrf) return csrf;
+        if (!opts.service) return json({ error: "Service not running" }, { status: 503 });
+        const outcome = await opts.service.backfill(0);
+        return json(outcome);
+      }
       if (path === "/api/transactions/delete" && req.method === "POST") {
         const csrf = assertSafeOrigin(req);
         if (csrf) return csrf;

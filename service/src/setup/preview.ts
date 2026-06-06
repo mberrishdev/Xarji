@@ -132,12 +132,12 @@ export function previewSenders(
 
       for (const raw of messages) {
         const tx = parseMessage(raw);
-        if (tx) {
+        if (tx && tx !== "skip") {
           parsedCount += 1;
           if (samples.length < sampleLimit) {
             samples.push(toSample(tx));
           }
-        } else {
+        } else if (!tx) {
           failedCount += 1;
         }
       }

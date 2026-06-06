@@ -287,6 +287,24 @@ export class StateDb {
     return row.count;
   }
 
+  /**
+   * Reset the sync cursor for one or all senders to re-process messages from
+   * a given point (default 0 = beginning of time). Safe to call while the
+   * service is stopped; on next start the service will re-process everything
+   * from fromId, dedup preventing double-syncing of already-processed rows.
+   */
+  resetCursor(senderId?: string, fromId: number = 0): void {
+    if (senderId) {
+      this.db
+        .query(`UPDATE sync_state SET last_message_id = ? WHERE sender_id = ?`)
+        .run(fromId, senderId);
+    } else {
+      this.db
+        .query(`UPDATE sync_state SET last_message_id = ?`)
+        .run(fromId);
+    }
+  }
+
   close(): void {
     this.db.close();
   }

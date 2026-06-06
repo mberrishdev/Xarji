@@ -514,7 +514,7 @@ function SortableRow({
             fontWeight: 700,
             fontFamily: T.sans,
             fontVariantNumeric: "tabular-nums",
-            color: T.text,
+            color: pct > 100 ? T.accent : T.text,
             marginLeft: 4,
             minWidth: 52,
             textAlign: "right",
