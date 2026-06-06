@@ -53,6 +53,8 @@ const RE_LOAN_LABEL = /სესხი:\s*(.+)/;
 const RE_IBAN = /^\s*GE\d{2}\*{3}\w+\s*$/m;
 // ATM cash withdrawal: "განაღდება: GEL1,000.00"
 const RE_ATM_AMOUNT = /განაღდება:\s*([A-Z]{3})([\d,]+\.?\d*)/;
+// P2P / interbank transfer: "გადარიცხვა: GEL700.00 Card:***5550 TBC_P2P>..."
+const RE_P2P_AMOUNT = /გადარიცხვა:\s*([A-Z]{3})([\d,]+\.?\d*)/;
 
 interface DetectedKind {
   kind: TransactionKind;
@@ -78,6 +80,9 @@ function detect(text: string): DetectedKind | null {
   }
   if (RE_ATM_AMOUNT.test(text)) {
     return { kind: "atm_withdrawal", status: "success" };
+  }
+  if (RE_P2P_AMOUNT.test(text)) {
+    return { kind: "transfer_out", status: "success" };
   }
   return null;
 }
@@ -158,7 +163,7 @@ function parseCard(text: string): string | null {
 }
 
 // Known non-transaction message patterns — marketing, alerts, notifications.
-const RE_SOLO_SKIP = /შეთავაზება|ამოეწურა|ინტერნეტბანკ|კოდი შეგყავს|ელექტრონული ყულაბი|მეგობრის მოწვევა|ინვესტირებული|განახლდა .+დათვლის წესი/;
+const RE_SOLO_SKIP = /შეთავაზება|ამოეწურა|ეწურება|ინტერნეტბანკ|კოდი შეგყავს|ელექტრონული ყულაბი|მეგობრის მოწვევა|ინვესტირებული|განახლდა .+დათვლის წესი|შეიძინ|სხვა ბანკიდან თანხის გადმოტანა|ჩამოიყვანეთ|იპოთეკურ|გაიაქტიურეთ|ისარგებლ|კონვერტაცია/;
 
 function parse(raw: RawMessage): Transaction | "skip" | null {
   const text = raw.text;
@@ -170,7 +175,7 @@ function parse(raw: RawMessage): Transaction | "skip" | null {
   if (RE_SOLO_SKIP.test(text)) return "skip";
 
   const detected = detect(text);
-  if (!detected) return null;
+  if (!detected) return "skip";
 
   let amount: number | null = null;
   let currency = "GEL";
@@ -209,12 +214,12 @@ function parse(raw: RawMessage): Transaction | "skip" | null {
       break;
     }
     case "transfer_out": {
-      const m = text.match(RE_OUTGOING_AMOUNT);
+      const outgoing = text.match(RE_OUTGOING_AMOUNT);
+      const p2p = text.match(RE_P2P_AMOUNT);
+      const m = outgoing ?? p2p;
       if (!m) return null;
       currency = m[1];
       amount = parseFlexibleAmount(m[2]);
-      // SOLO `გასავალი:` SMS carries an IBAN but typically no recipient
-      // name. Use a stable generic label so the dashboard doesn't render "—".
       merchant = "Transfer";
       break;
     }

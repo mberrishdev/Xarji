@@ -50,9 +50,42 @@ const RE_SELF = /(?:საკუთარ ანგარიშებზე|[Ss]
 const RE_OTP = /\bCode:/i;
 // Currency conversion notification: კონვერტაცია / Konvertacia
 const RE_FX = /(?:კონვერტაცია|[Kk]onvertacia)/;
+// Investment / stock trading execution notices from TBC Invest
+const RE_INVEST = /სავაჭრო დავალება შესრულდა|ინვესტიციების გვ/;
+// Scroll (TBC instalment service) cashback/return notifications
+const RE_SCROLL = /Scroll-ში გადახდილი|დაგიბრუნდებათ.*Scroll/;
+// Georgian-language OTP / payment confirmation codes
+const RE_GEO_OTP = /კოდით შეგიძლიათ.*დაადასტუროთ|კოდია.*დაადასტუ/;
+// Savings account summary ("ჩემი ყულაბა" = "My Piggy Bank")
+const RE_SAVINGS = /ჩემი ყულაბ/;
+// Instalment split confirmation ("ნივთის ღირებულება გაიყო N ნაწილად")
+const RE_SPLIT = /გაიყო\s+\d+\s+ნაწილად/;
+// Informational account/profile change notices ("გაცნობებთ, რომ…")
+const RE_NOTICE = /გაცნობებთ,?\s+რომ/;
+// P2P payment-link notifications (p2p.ge, tbc.ge peer transfer links)
+const RE_P2P_LINK = /www\.p2p\.ge|p2p\.tbc\.ge/;
+// Deposit / savings account closed notification
+const RE_DEPOSIT_CLOSED = /ანაბარი.{0,40}დაიხურა/;
+// Loyalty/cashback "for your purchase you received X" notifications
+const RE_CASHBACK_NOTIF = /შენაძენზე\s+დაგ/;
+// Georgian-language authorization OTP ("ავტორიზაციის SMS კოდი:", "ერთჯერადი კოდი:", "კოდი: NNNN")
+const RE_GEO_AUTH_OTP = /SMS\s+კოდი:|ავტორიზაციის.*კოდი|ერთჯერადი\s+კოდი:|კოდი:\s*\d/;
+// Business internet bank new device/browser alert
+const RE_BIZ_DEVICE = /ბიზნეს\s+ინტერნეტბანკ/;
+// Instalment purchase notification ("ნივთის ღირებულება … გაიყო/განაწილდა …")
+const RE_INSTALMENT_NOTIF = /ნივთის\s+ღირებულება/;
+// Instalment limit approval / change notice
+const RE_INSTALMENT_LIMIT = /განაწილების\s+ლიმიტი/;
+// PIN code delivery SMS
+const RE_PIN = /პინ\s+კოდი/;
+// Digital wallet (Apple/Google) card management alerts
+const RE_WALLET = /Apple\s+Wallet|Google\s+Wallet|Wallet-დან|Wallet-ში/;
 
 // ── Incoming transfer (ჩარიცხვა / Charicxva: NNN CUR) ─────────────────────
 const RE_INCOMING = /(?:ჩარიცხვა|[Cc]haricxva):\s*([\d.,]+)\s*([A-Z]{3})/;
+// ── P2P received (ჩაგერიცხათ NNN ლარი NAME-სგან) ─────────────────────────
+// Completed peer-to-peer transfer from another person via p2p.ge / TBC Pay.
+const RE_P2P_RECEIVED = /ჩაგერიცხათ\s+([\d.,]+)\s+ლარი/;
 
 // ── Outgoing transfer (გადარიცხვა / Gadaricxva: NNN CUR) ──────────────────
 const RE_TRANSFER_OUT = /(?:გადარიცხვა|[Gg]adaricxva):\s*([\d.,]+)\s*([A-Z]{3})/;
@@ -79,6 +112,8 @@ const RE_REVERSAL_INLINE = /(?:უკუგატარება|[Uu]kugatareba)
 // both spellings via an optional "k". Distinct from "Gadaricxva" — the
 // preceding word boundary stops "Gadaricxva" from matching here by accident.
 const RE_BILL = /(?:გადახდა|[Gg]ada(?:kh|x)da):\s*([\d.,]+)\s*([A-Z]{3})/;
+// Old TBC format (pre-2024): "გადახდა: DD/MM/YYYY 35.00 GEL MERCHANT ID:xxxxx"
+const RE_BILL_OLD = /(?:გადახდა|[Gg]ada(?:kh|x)da):\s*\d{2}\/\d{2}\/\d{4}\s+([\d.,]+)\s+([A-Z]{3})/;
 
 // ── Mobile top-up (მობილურის შევსება / Mobiluris shevseba: …) ─────────────
 const RE_MOBILE = /(?:მობილურის შევსება|[Mm]obiluris shevseba):\s*([\d.,]+)\s*([A-Z]{3})/;
@@ -135,9 +170,11 @@ interface Detected {
 function detect(text: string): Detected | null {
   if (RE_FAILED.test(text)) return { kind: "payment_failed", status: "failed" };
   if (RE_LOAN.test(text))   return { kind: "loan_repayment", status: "success" };
-  if (RE_INCOMING.test(text)) return { kind: "transfer_in",  status: "success" };
+  if (RE_INCOMING.test(text))     return { kind: "transfer_in", status: "success" };
+  if (RE_P2P_RECEIVED.test(text)) return { kind: "transfer_in", status: "success" };
   if (RE_TRANSFER_OUT.test(text)) return { kind: "transfer_out", status: "success" };
-  if (RE_BILL.test(text))   return { kind: "transfer_out",   status: "success" };
+  if (RE_BILL_OLD.test(text)) return { kind: "transfer_out", status: "success" };
+  if (RE_BILL.test(text))     return { kind: "transfer_out", status: "success" };
   if (RE_MOBILE.test(text)) return { kind: "transfer_out",   status: "success" };
   if (RE_AUTO.test(text))   return { kind: "transfer_out",   status: "success" };
   if (RE_DEPOSIT.test(text)) return { kind: "deposit",       status: "success" };
@@ -237,13 +274,28 @@ function parseBillMerchant(text: string): string | null {
 
 function parse(raw: RawMessage): Transaction | "skip" | null {
   // Explicitly-known non-transactions: cursor can safely advance past these.
-  if (RE_SELF.test(raw.text)) return "skip";
-  if (RE_OTP.test(raw.text))  return "skip";
-  if (RE_FX.test(raw.text))   return "skip";
+  if (RE_SELF.test(raw.text))    return "skip";
+  if (RE_OTP.test(raw.text))     return "skip";
+  if (RE_FX.test(raw.text))      return "skip";
+  if (RE_INVEST.test(raw.text))  return "skip";
+  if (RE_SCROLL.test(raw.text))  return "skip";
+  if (RE_GEO_OTP.test(raw.text)) return "skip";
+  if (RE_SAVINGS.test(raw.text))  return "skip";
+  if (RE_SPLIT.test(raw.text))    return "skip";
+  if (RE_NOTICE.test(raw.text))          return "skip";
+  if (RE_P2P_LINK.test(raw.text))        return "skip";
+  if (RE_DEPOSIT_CLOSED.test(raw.text))  return "skip";
+  if (RE_CASHBACK_NOTIF.test(raw.text))    return "skip";
+  if (RE_GEO_AUTH_OTP.test(raw.text))     return "skip";
+  if (RE_BIZ_DEVICE.test(raw.text))       return "skip";
+  if (RE_INSTALMENT_NOTIF.test(raw.text))  return "skip";
+  if (RE_INSTALMENT_LIMIT.test(raw.text))  return "skip";
+  if (RE_PIN.test(raw.text))              return "skip";
+  if (RE_WALLET.test(raw.text))           return "skip";
 
   const text = raw.text;
   const detected = detect(text);
-  if (!detected) return null;
+  if (!detected) return "skip";
 
   let amount: number | null = null;
   let currency = "GEL";
@@ -277,18 +329,38 @@ function parse(raw: RawMessage): Transaction | "skip" | null {
     }
 
     case "transfer_in": {
-      const m = text.match(RE_INCOMING);
-      if (!m) return null;
-      amount = parseFlexibleAmount(m[1]);
-      currency = m[2];
-      counterparty = parseCounterpartyAfterDate(text);
-      merchant = counterparty;
+      const incoming = text.match(RE_INCOMING);
+      if (incoming) {
+        amount = parseFlexibleAmount(incoming[1]);
+        currency = incoming[2];
+        counterparty = parseCounterpartyAfterDate(text);
+        merchant = counterparty;
+      } else {
+        // P2P received: "თქვენ ჩაგერიცხათ NNN ლარი NAME-სგან."
+        const p2p = text.match(RE_P2P_RECEIVED);
+        if (!p2p) return null;
+        amount = parseFlexibleAmount(p2p[1]);
+        currency = "GEL";
+        const nameMatch = text.match(/ჩაგერიცხათ[\d.,\s]+ლარი\s+(.+?)-სგან/);
+        counterparty = nameMatch ? nameMatch[1].trim() : null;
+        merchant = counterparty;
+      }
       break;
     }
 
     case "transfer_out": {
       // Distinguish the four outgoing-transfer subtypes by which pattern matched.
-      if (RE_BILL.test(text)) {
+      if (RE_BILL_OLD.test(text)) {
+        const m = text.match(RE_BILL_OLD);
+        if (!m) return null;
+        amount = parseFlexibleAmount(m[1]);
+        currency = m[2];
+        // Old format: "გადახდა: DD/MM/YYYY 35.00 GEL ASG ID:33001004331"
+        // Merchant is the word(s) after the currency before " ID:"
+        const merchantMatch = text.match(/[A-Z]{3}\s+([A-Za-z0-9 &_./-]+?)(?:\s+ID:|\s*$)/m);
+        merchant = merchantMatch ? merchantMatch[1].trim() : null;
+        counterparty = merchant;
+      } else if (RE_BILL.test(text)) {
         const m = text.match(RE_BILL);
         if (!m) return null;
         amount = parseFlexibleAmount(m[1]);

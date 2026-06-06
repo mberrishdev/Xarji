@@ -50,12 +50,13 @@ export function parseDateDotted(text: string): Date | null {
   return new Date(Number(y), Number(mo) - 1, Number(d));
 }
 
-/** Parse `DD/MM/YYYY`. */
+/** Parse `DD/MM/YYYY` or `DD/MM/YY`. */
 export function parseDateSlashed(text: string): Date | null {
-  const m = text.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+  const m = text.match(/(\d{2})\/(\d{2})\/(\d{2,4})/);
   if (!m) return null;
   const [, d, mo, y] = m;
-  return new Date(Number(y), Number(mo) - 1, Number(d));
+  const year = y.length === 2 ? 2000 + Number(y) : Number(y);
+  return new Date(year, Number(mo) - 1, Number(d));
 }
 
 /** Try both dotted and slashed date formats. */
