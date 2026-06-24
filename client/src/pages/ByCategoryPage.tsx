@@ -88,7 +88,7 @@ export function ByCategoryPage() {
   const T = useTheme();
   const { payments } = useConvertedPayments();
   const { range, props: rangeProps } = useRangeState("Month");
-  const { categorize, getCategory } = useCategorizer();
+  const { categorize, getCategory, allCategories } = useCategorizer();
   const { categories: dbCategories } = useCategories();
   const { updateCategory } = useCategoryActions();
 
@@ -128,6 +128,15 @@ export function ByCategoryPage() {
       map[cat.id].total += p.gelAmount;
       map[cat.id].count += 1;
     }
+    // Surface zero-spend categories ONLY when they have a budget set,
+    // so a budgeted category stays visible (with its limit + progress)
+    // even in a range it had no spend. Zero-spend categories without a
+    // limit are omitted — they'd just be noise.
+    for (const c of allCategories) {
+      if (map[c.id]) continue;
+      if (!dbById.get(c.id)?.targetAmount) continue;
+      map[c.id] = { cat: c.id, total: 0, count: 0, meta: c };
+    }
     return Object.values(map).sort((a, b) => {
       const ao = dbById.get(a.cat)?.sortOrder;
       const bo = dbById.get(b.cat)?.sortOrder;
@@ -136,7 +145,7 @@ export function ByCategoryPage() {
       if (bo !== undefined) return 1;
       return b.total - a.total;
     });
-  }, [monthPayments, getCategory, dbById]);
+  }, [monthPayments, getCategory, allCategories, dbById]);
 
   const txsByCat = useMemo(() => {
     const map: Record<string, InkTx[]> = {};
