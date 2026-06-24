@@ -175,7 +175,11 @@ function parse(raw: RawMessage): Transaction | "skip" | null {
   if (RE_SOLO_SKIP.test(text)) return "skip";
 
   const detected = detect(text);
-  if (!detected) return "skip";
+  // Unrecognised content returns null (NOT "skip"): the sync cursor holds
+  // at the first failed message so a later parser upgrade picks it up
+  // retroactively. Only the explicitly-known non-transaction patterns
+  // above return "skip" (cursor advances past them). See §4.5.
+  if (!detected) return null;
 
   let amount: number | null = null;
   let currency = "GEL";
