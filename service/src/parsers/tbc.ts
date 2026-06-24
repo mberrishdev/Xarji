@@ -111,12 +111,15 @@ const RE_REVERSAL_INLINE = /(?:უკუგატარება|[Uu]kugatareba)
 // Latin form varies in the wild: "Gadakhda" and "Gadaxda" both seen. Allow
 // both spellings via an optional "k". Distinct from "Gadaricxva" — the
 // preceding word boundary stops "Gadaricxva" from matching here by accident.
-const RE_BILL = /(?:გადახდა|[Gg]ada(?:kh|x)da):\s*([\d.,]+)\s*([A-Z]{3})/;
+// Colon is optional: a newer TBC layout drops it, putting the header on its
+// own line with the amount glued to the currency ("გადახდა\n35.00GEL").
+const RE_BILL = /(?:გადახდა|[Gg]ada(?:kh|x)da):?\s*([\d.,]+)\s*([A-Z]{3})/;
 // Old TBC format (pre-2024): "გადახდა: DD/MM/YYYY 35.00 GEL MERCHANT ID:xxxxx"
 const RE_BILL_OLD = /(?:გადახდა|[Gg]ada(?:kh|x)da):\s*\d{2}\/\d{2}\/\d{4}\s+([\d.,]+)\s+([A-Z]{3})/;
 
 // ── Mobile top-up (მობილურის შევსება / Mobiluris shevseba: …) ─────────────
-const RE_MOBILE = /(?:მობილურის შევსება|[Mm]obiluris shevseba):\s*([\d.,]+)\s*([A-Z]{3})/;
+// Colon optional — same newer colon-less layout as RE_BILL.
+const RE_MOBILE = /(?:მობილურის შევსება|[Mm]obiluris shevseba):?\s*([\d.,]+)\s*([A-Z]{3})/;
 
 // ── Scheduled auto-transfer (ავტომატური გადარიცხვა /
 //                             Avtomaturi gadaricxva) ──────────────────────

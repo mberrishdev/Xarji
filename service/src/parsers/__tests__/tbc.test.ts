@@ -466,9 +466,50 @@ describe("TBC parser — bill payment (გAdaXda:)", () => {
   });
 });
 
+// Newer colon-less layout: header on its own line with no trailing colon
+// and the amount glued to the currency ("35.00GEL"). Real samples dumped
+// 24/06/2026.
+describe("TBC parser — bill payment (colon-less layout)", () => {
+  test("All Service Group bill payment", () => {
+    const tx = parse(
+      810,
+      [
+        "გადახდა",
+        "35.00GEL ",
+        " All Service Group",
+        "ID:33001004331",
+        "24/06/2026 15:38:52",
+      ].join("\n")
+    );
+    expect(tx.transactionType).toBe("transfer_out");
+    expect(tx.direction).toBe("out");
+    expect(tx.amount).toBe(35);
+    expect(tx.currency).toBe("GEL");
+    expect(tx.merchant).toBe("All Service Group");
+  });
+});
+
 // ── Mobile top-ups ────────────────────────────────────────────────────────
 
 describe("TBC parser — mobile top-up (მobIlURIs ShEvSeba:)", () => {
+  test("Silknet top-up (colon-less layout)", () => {
+    const tx = parse(
+      851,
+      [
+        "მობილურის შევსება",
+        "10.00GEL ",
+        "Silknet account",
+        "ID:591300569",
+        "24/06/2026 15:39:05",
+      ].join("\n")
+    );
+    expect(tx.transactionType).toBe("transfer_out");
+    expect(tx.direction).toBe("out");
+    expect(tx.amount).toBe(10);
+    expect(tx.currency).toBe("GEL");
+    expect(tx.merchant).toBe("Silknet account");
+  });
+
   test("Silknet top-up", () => {
     const tx = tbcParser.parse(
       mk(
